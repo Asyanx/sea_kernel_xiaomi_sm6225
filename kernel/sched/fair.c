@@ -6804,7 +6804,7 @@ static inline int select_idle_sibling_cstate_aware(struct task_struct *p,
 	struct sched_domain *sd;
 	struct sched_group *sg;
 	int best_idle_cpu = -1;
-	int best_idle_cstate = INT_MAX;
+	int best_idle_cstate = -1;
 	int best_idle_capacity = INT_MAX;
 	int i;
 
@@ -6816,20 +6816,20 @@ static inline int select_idle_sibling_cstate_aware(struct task_struct *p,
 		sg = sd->groups;
 		do {
 			if (!cpumask_intersects(sched_group_span(sg),
-						p->cpus_ptr))
+						&p->cpus_allowed))
 				goto next;
 
-			for_each_cpu_and(i, p->cpus_ptr,
+			for_each_cpu_and(i, &p->cpus_allowed,
 					  sched_group_span(sg)) {
-				int idle_idx = -1;
+				int idle_idx;
 				unsigned long new_usage;
 				unsigned long capacity_orig;
 
-				if (!(available_idle_cpu(i) || sched_idle_cpu(i)))
+				if (!idle_cpu(i))
 					goto next;
 
 				/* figure out if the task can fit here at all */
-				new_usage = uclamp_task(p);
+				new_usage = boosted_task_util(p);
 				capacity_orig = capacity_orig_of(i);
 
 				if (new_usage > capacity_orig)
@@ -6846,9 +6846,7 @@ static inline int select_idle_sibling_cstate_aware(struct task_struct *p,
 				/* otherwise select CPU with shallowest idle
 				 * state to reduce wakeup latency.
 				 */
-				if (available_idle_cpu(i))
-					idle_idx = idle_get_state_idx(cpu_rq(i));
-
+				idle_idx = idle_get_state_idx(cpu_rq(i));
 				if (idle_idx < best_idle_cstate &&
 				    capacity_orig <= best_idle_capacity) {
 					best_idle_cpu = i;
