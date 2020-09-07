@@ -12,6 +12,11 @@
 #include <linux/slab.h>
 #include <linux/battery_saver.h>
 #include <uapi/linux/sched/types.h>
+#include <drm/drm_panel.h>
+#include <linux/module.h>
+
+static bool disable_boosts __read_mostly;
+module_param(disable_boosts, bool, 0644);
 
 enum {
 	SCREEN_OFF,
@@ -72,6 +77,9 @@ static void __devfreq_boost_kick(struct boost_dev *b)
 void devfreq_boost_kick(enum df_device device)
 {
 	struct df_boost_drv *d = &df_boost_drv_g;
+	
+	if (disable_boosts)
+		return;
 
 	__devfreq_boost_kick(&d->devices[device]);
 }
@@ -116,6 +124,9 @@ bool df_boost_within_input(unsigned long timeout_ms)
 void devfreq_boost_kick_max(enum df_device device, unsigned int duration_ms)
 {
 	struct df_boost_drv *d = &df_boost_drv_g;
+	
+	if (disable_boosts)
+		return;
 
 	__devfreq_boost_kick_max(&d->devices[device], duration_ms);
 }
