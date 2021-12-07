@@ -343,7 +343,7 @@ static struct limits_dcvs_hw *get_dcvsh_hw_from_cpu(int cpu)
 	return NULL;
 }
 
-static int enable_lmh(void)
+static int enable_lmh(struct device_node *dn)
 {
 	int ret = 0;
 	struct scm_desc desc_arg;
@@ -356,6 +356,9 @@ static int enable_lmh(void)
 		pr_err("Error switching profile:[1]. err:%d\n", ret);
 		return ret;
 	}
+
+	if (of_property_read_bool(dn, "qcom,legacy-lmh-enable"))
+		lmh_enabled = true;
 
 	return ret;
 }
@@ -648,7 +651,7 @@ static int limits_dcvs_probe(struct platform_device *pdev)
 				affinity);
 			return ret;
 		}
-		ret = enable_lmh();
+		ret = enable_lmh(dn);
 		if (ret)
 			return ret;
 	}
