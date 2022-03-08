@@ -373,9 +373,9 @@ HOSTCC	= gcc
 HOSTCXX	= g++
 endif
 KBUILD_HOSTCFLAGS   := -Wall -Wmissing-prototypes -Wstrict-prototypes -O3 \
-		-fomit-frame-pointer -std=gnu89 -pipe $(HOST_LFS_CFLAGS) \
-		$(HOSTCFLAGS)
-KBUILD_HOSTCXXFLAGS := -O3 $(HOST_LFS_CFLAGS) $(HOSTCXXFLAGS)
+		-fomit-frame-pointer -std=gnu89 -pipe -Wdeclaration-after-statement \
+		$(HOST_LFS_CFLAGS) $(HOSTCFLAGS)
+KBUILD_HOSTCXXFLAGS := -Wall -O3 $(HOST_LFS_CFLAGS) $(HOSTCXXFLAGS)
 KBUILD_HOSTLDFLAGS  := $(HOST_LFS_LDFLAGS) $(HOSTLDFLAGS)
 KBUILD_HOSTLDLIBS   := $(HOST_LFS_LIBS) $(HOSTLDLIBS)
 
