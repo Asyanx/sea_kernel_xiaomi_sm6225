@@ -450,6 +450,17 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -Werror=return-type -Wno-format-security \
 		   -std=gnu11
 KBUILD_CPPFLAGS := -D__KERNEL__
+
+# Tell compiler to tune the performance of the code for a specified
+# target processor
+ifeq ($(cc-name),gcc)
+KBUILD_CFLAGS += -mcpu=cortex-a73.cortex-a53 -mtune=cortex-a73.cortex-a53
+KBUILD_AFLAGS += -mcpu=cortex-a73.cortex-a53 -mtune=cortex-a73.cortex-a53
+else ifeq ($(cc-name),clang)
+KBUILD_CFLAGS += -mcpu=cortex-a53+crypto+crc -mtune=cortex-a53
+KBUILD_AFLAGS += -mcpu=cortex-a53 -mtune=cortex-a53
+endif
+
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS_MODULE  := -DMODULE
@@ -718,14 +729,6 @@ ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS   += -Os
 else
 KBUILD_CFLAGS   += -O3
-endif
-
-# Tell compiler to tune the performance of the code for a specified
-# target processor
-ifeq ($(cc-name),gcc)
-KBUILD_CFLAGS += -mcpu=cortex-a73.cortex-a53 -mtune=cortex-a73.cortex-a53
-else ifeq ($(cc-name),clang)
-KBUILD_CFLAGS += -mcpu=cortex-a53 -mtune=cortex-a53
 endif
 
 # Tell gcc to never replace conditional load with a non-conditional one
