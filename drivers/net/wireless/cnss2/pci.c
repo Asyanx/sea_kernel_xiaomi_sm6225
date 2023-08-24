@@ -2943,8 +2943,6 @@ static int cnss_pci_runtime_suspend(struct device *dev)
 		}
 	}
 
-	cnss_pr_vdbg("Runtime suspend start\n");
-
 	driver_ops = pci_priv->driver_ops;
 	if (driver_ops && driver_ops->runtime_ops &&
 	    driver_ops->runtime_ops->runtime_suspend)
@@ -2954,8 +2952,6 @@ static int cnss_pci_runtime_suspend(struct device *dev)
 
 	if (ret)
 		pci_priv->drv_connected_last = 0;
-
-	cnss_pr_vdbg("Runtime suspend status: %d\n", ret);
 
 	return ret;
 }
@@ -2978,8 +2974,6 @@ static int cnss_pci_runtime_resume(struct device *dev)
 		return -EAGAIN;
 	}
 
-	cnss_pr_vdbg("Runtime resume start\n");
-
 	driver_ops = pci_priv->driver_ops;
 	if (driver_ops && driver_ops->runtime_ops &&
 	    driver_ops->runtime_ops->runtime_resume)
@@ -2990,15 +2984,11 @@ static int cnss_pci_runtime_resume(struct device *dev)
 	if (!ret)
 		pci_priv->drv_connected_last = 0;
 
-	cnss_pr_vdbg("Runtime resume status: %d\n", ret);
-
 	return ret;
 }
 
 static int cnss_pci_runtime_idle(struct device *dev)
 {
-	cnss_pr_vdbg("Runtime idle\n");
-
 	pm_request_autosuspend(dev);
 
 	return -EBUSY;
