@@ -187,9 +187,9 @@ unsigned int sysctl_sched_min_task_util_for_colocation = 35;
 __read_mostly unsigned int sysctl_sched_prefer_spread;
 unsigned int sysctl_walt_rtg_cfs_boost_prio = 99; /* disabled by default */
 unsigned int sysctl_walt_low_latency_task_threshold; /* disabled by default */
+__read_mostly unsigned int sysctl_sched_force_lb_enable = 1;
 #endif
 unsigned int sched_small_task_threshold = 102;
-__read_mostly unsigned int sysctl_sched_force_lb_enable = 1;
 
 static inline void update_load_add(struct load_weight *lw, unsigned long inc)
 {
@@ -12167,6 +12167,7 @@ static inline bool nohz_idle_balance(struct rq *this_rq, enum cpu_idle_type idle
 static inline void nohz_newidle_balance(struct rq *this_rq) { }
 #endif /* CONFIG_NO_HZ_COMMON */
 
+#ifdef CONFIG_SCHED_WALT
 static bool silver_has_big_tasks(void)
 {
 	int cpu;
@@ -12181,6 +12182,12 @@ static bool silver_has_big_tasks(void)
 
 	return false;
 }
+#else
+static inline bool silver_has_big_tasks(void)
+{
+	return false;
+}
+#endif
 
 /*
  * idle_balance is called by schedule() if this_cpu is about to become
@@ -12201,6 +12208,7 @@ static int idle_balance(struct rq *this_rq, struct rq_flags *rf)
 				silver_has_big_tasks() &&
 				sysctl_sched_force_lb_enable &&
 				(atomic_read(&this_rq->nr_iowait) == 0));
+#endif
 
 
 	if (cpu_isolated(this_cpu))
