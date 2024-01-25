@@ -17,12 +17,6 @@
  * criteria to determine the better CPU to wake a task upon between CPUs that
  * have the same relative utilization. This way, single-core performance,
  * latency, and cache affinity are all optimized where possible.
- *
- * CASS doesn't feature explicit energy awareness but its basic load balancing
- * principle results in decreased overall energy, often better than what is
- * possible with explicit energy awareness. By fairly balancing load based on
- * relative utilization, all CPUs are kept at their lowest P-state necessary to
- * satisfy the overall load at any given moment.
  */
 
 struct cass_cpu_cand {
@@ -73,8 +67,9 @@ void cass_cpu_util(struct cass_cpu_cand *c, int this_cpu)
 static __always_inline
 bool cass_cpu_better(const struct cass_cpu_cand *a,
 		     const struct cass_cpu_cand *b,
-		     int this_cpu, int prev_cpu)
+		     int this_cpu, int prev_cpu, unsigned long energy[NR_CPUS])
 {
+#define cass_cmp_r(a, b, c) ({ res = ((a) - (b)) * (abs((a) - (b)) > (c)); })
 #define cass_cmp(a, b) ({ res = (a) - (b); })
 #define cass_eq(a, b) ({ res = (a) == (b); })
 	long res;
@@ -90,7 +85,7 @@ bool cass_cpu_better(const struct cass_cpu_cand *a,
 		goto done;
 
 	/* Prefer the CPU with lower relative utilization */
-	if (cass_cmp(b->util, a->util))
+	if (cass_cmp_r(b->util, a->util, 64))
 		goto done;
 
 	/* Prefer the CPU that is idle (only relevant for uclamped tasks) */
@@ -98,12 +93,16 @@ bool cass_cpu_better(const struct cass_cpu_cand *a,
 		goto done;
 
 	/* Prefer the CPU with higher capacity */
-	if (cass_cmp(a->cap, b->cap))
+	if (cass_cmp_r(a->cap, b->cap, 64))
 		goto done;
 
 	/* Prefer the CPU with lower idle exit latency */
-	if (cass_cmp(b->exit_lat, a->exit_lat))
+	if (cass_cmp_r(b->exit_lat, a->exit_lat, 1))
 		goto done;
+
+	/* Prefer lower energy consumption CPU */
+        if (cass_cmp_r(energy[b->cpu], energy[a->cpu], energy[b->cpu] >> 4))
+                goto done;
 
 	/* Prefer the previous CPU */
 	if (cass_eq(a->cpu, prev_cpu) || !cass_cmp(b->cpu, prev_cpu))
@@ -112,6 +111,22 @@ bool cass_cpu_better(const struct cass_cpu_cand *a,
 	/* Prefer the CPU that shares a cache with the previous CPU */
 	if (cass_cmp(cpus_share_cache(a->cpu, prev_cpu),
 		     cpus_share_cache(b->cpu, prev_cpu)))
+		goto done;
+
+	/* Prefer the CPU with lower relative utilization */
+	if (cass_cmp(b->util, a->util))
+		goto done;
+
+	/* Prefer the CPU with higher capacity */
+	if (cass_cmp(a->cap, b->cap))
+		goto done;
+
+        /* Prefer the CPU with lower idle exit latency */
+        if (cass_cmp(b->exit_lat, a->exit_lat))
+                goto done;
+
+	/* Prefer lower energy consumption CPU */
+ 	if (cass_cmp(energy[b->cpu], energy[a->cpu]))
 		goto done;
 
 	/* @a isn't a better CPU than @b. @res must be <=0 to indicate such. */
@@ -124,10 +139,22 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool rt)
 {
 	/* Initialize @best such that @best always has a valid CPU at the end */
 	struct cass_cpu_cand cands[2], *best = cands;
+        struct rq *rq = cpu_rq(smp_processor_id());
+        unsigned long energy[NR_CPUS] = {0};
 	int this_cpu = raw_smp_processor_id();
+        cpumask_t candidates = {};
+        struct perf_domain *pd;
 	unsigned long p_util, uc_min;
 	bool has_idle = false;
 	int cidx = 0, cpu;
+
+	/* Get candidate CPUs */
+	cpumask_and(&candidates, p->cpus_ptr, cpu_active_mask);
+
+	/* Calculate energy of candidate cpu */
+	pd = rcu_dereference(rq->rd->pd);
+	if (pd)
+		compute_energy_change(p, pd, prev_cpu, &candidates, energy);
 
 	/*
 	 * Get the utilization and uclamp minimum threshold for this task. Note
@@ -147,7 +174,7 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool rt)
 	 * otherwise, if only one CPU is allowed and it is skipped before
 	 * @curr->cpu is set, then @best->cpu will be garbage.
 	 */
-	for_each_cpu_and(cpu, p->cpus_ptr, cpu_active_mask) {
+	for_each_cpu(cpu, &candidates) {
 		/* Use the free candidate slot for @curr */
 		struct cass_cpu_cand *curr = &cands[cidx];
 		struct cpuidle_state *idle_state;
@@ -241,7 +268,7 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool rt)
 		 * cidx still needs to be changed to the other candidate slot.
 		 */
 		if (best == curr ||
-		    cass_cpu_better(curr, best, this_cpu, prev_cpu)) {
+		    cass_cpu_better(curr, best, this_cpu, prev_cpu, energy)) {
 			best = curr;
 			cidx ^= 1;
 		}
