@@ -85,6 +85,9 @@ void noinstr cpu_do_idle(void)
 	s64 wfi_timeout_us = teo_wfi_timeout_us();
 	struct hrtimer *timer = NULL;
 
+	if (need_resched())
+		return;
+
 	/*
 	 * If the tick is stopped, arm a timer to ensure that the CPU doesn't
 	 * stay in WFI too long and burn power. That way, the CPU will be woken
