@@ -77,6 +77,12 @@ EXPORT_SYMBOL_GPL(pm_power_off);
 void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
 EXPORT_SYMBOL_GPL(arm_pm_restart);
 
+void noinstr cpu_do_idle(void)
+{
+	dsb(sy);
+	wfi();
+}
+
 /*
  * This is our default idle handler.
  */
