@@ -62,12 +62,15 @@ static struct df_boost_drv df_boost_drv_g __read_mostly = {
 
 static void __devfreq_boost_kick(struct boost_dev *b)
 {
+
+        unsigned int period = CONFIG_DEVFREQ_INPUT_BOOST_DURATION_MS * 1;
+
 	if (!READ_ONCE(b->df) || test_bit(SCREEN_OFF, &b->state) || is_battery_saver_on())
 		return;
 
 	set_bit(INPUT_BOOST, &b->state);
 	if (!mod_delayed_work(system_unbound_wq, &b->input_unboost,
-		msecs_to_jiffies(CONFIG_DEVFREQ_INPUT_BOOST_DURATION_MS))) {
+		msecs_to_jiffies(period))) {
 		/* Set the bit again in case we raced with the unboost worker */
 		set_bit(INPUT_BOOST, &b->state);
 		wake_up(&b->boost_waitq);
