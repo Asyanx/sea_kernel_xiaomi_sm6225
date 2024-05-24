@@ -126,6 +126,14 @@ int __weak arch_asym_cpu_priority(int cpu)
  * (default: ~5%)
  */
 #define capacity_greater(cap1, cap2) ((cap1) * 1024 > (cap2) * 1078)
+
+/*
+ * The margin used when comparing utilization with CPU capacity.
+ *
+ * (default: ~20%)
+ */
+#define fits_capacity(cap, max)	((cap) * 1280 < (max) * 1024)
+
 #endif
 
 #ifdef CONFIG_CFS_BANDWIDTH
@@ -142,13 +150,7 @@ int __weak arch_asym_cpu_priority(int cpu)
 unsigned int sysctl_sched_cfs_bandwidth_slice		= 5000UL;
 #endif
 
-/*
- * The margin used when comparing utilization with CPU capacity:
- * util * margin < capacity * 1024
- *
- * (default: ~20%)
- */
-unsigned int capacity_margin				= 1280;
+#ifdef CONFIG_SCHED_WALT
 unsigned int sched_capacity_margin_up[CPU_NR] = {
 			[0 ... NR_CPUS-1] = 1078}; /* ~5% margin */
 unsigned int sched_capacity_margin_down[CPU_NR] = {
@@ -158,7 +160,6 @@ unsigned int sched_capacity_margin_up_boosted[CPU_NR] = {
 unsigned int sched_capacity_margin_down_boosted[CPU_NR] = {
 			[0 ... NR_CPUS-1] = 1205}; /* ~15% margin */
 
-#ifdef CONFIG_SCHED_WALT
 /* 1ms default for 20ms window size scaled to 1024 */
 unsigned int sysctl_sched_min_task_util_for_boost = 51;
 /* 0.68ms default for 20ms window size scaled to 1024 */
@@ -4435,6 +4436,7 @@ bias_to_this_cpu(struct task_struct *p, int cpu, int start_cpu)
 	return base_test && start_cap_test;
 }
 
+#ifdef CONFIG_SCHED_WALT
 static inline bool task_fits_capacity(struct task_struct *p,
 					long capacity,
 					int cpu)
@@ -4460,6 +4462,12 @@ static inline bool task_fits_capacity(struct task_struct *p,
 
 	return capacity * 1024 > uclamp_task(p) * margin;
 }
+#else
+static inline int task_fits_capacity(struct task_struct *p, long capacity)
+{
+	return fits_capacity(uclamp_task_util(p), capacity);
+}
+#endif
 
 static inline bool task_fits_max(struct task_struct *p, int cpu)
 {
@@ -5856,6 +5864,12 @@ bool cpu_overutilized(int cpu)
 {
 	return __cpu_overutilized(cpu, 0);
 }
+#else
+bool cpu_overutilized(int cpu)
+{
+	return !fits_capacity(cpu_util(cpu), capacity_of(cpu));
+}
+#endif
 
 static bool sd_overutilized(struct sched_domain *sd)
 {
@@ -8274,8 +8288,7 @@ static void select_cpu_candidates(struct sched_domain *sd, cpumask_t *cpus,
 			 */
 			util = uclamp_rq_util_with(cpu_rq(cpu), util, p);
 
-			if (cpu_cap * 1024 <
-					util * sched_capacity_margin_up[cpu])
+			if (!fits_capacity(util, cpu_cap))
 				continue;
 
 			/*
