@@ -3207,6 +3207,11 @@ static void msm_geni_serial_cons_pm(struct uart_port *uport,
 		se_geni_resources_off(&msm_port->serial_rsc);
 }
 
+static void msm_geni_flush_buffer(struct uart_port *uport)
+{
+	msm_geni_serial_stop_tx(uport);
+}
+
 static const struct uart_ops msm_geni_console_pops = {
 	.tx_empty = msm_geni_serial_tx_empty,
 	.stop_tx = msm_geni_serial_stop_tx,
@@ -3220,6 +3225,7 @@ static const struct uart_ops msm_geni_console_pops = {
 	.set_mctrl = msm_geni_cons_set_mctrl,
 	.get_mctrl = msm_geni_cons_get_mctrl,
 #ifdef CONFIG_CONSOLE_POLL
+        .flush_buffer = msm_geni_flush_buffer,
 	.poll_get_char	= msm_geni_serial_get_char,
 	.poll_put_char	= msm_geni_serial_poll_put_char,
 #endif
