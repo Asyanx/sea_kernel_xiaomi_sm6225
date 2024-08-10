@@ -1019,7 +1019,9 @@ static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
 		if ((size == 0 || size < prtd->pcm_count) && ((offset + size) < prtd->pcm_count)) {
 			memset(bufptr + offset + size, 0, prtd->pcm_count - size);
 			if (fbytes > prtd->pcm_count)
-				size = xfer = prtd->pcm_count;
+			size = xfer = prtd->pcm_count;
+			else
+				size = xfer = fbytes;	
 			else
 				size = xfer = fbytes;
 		}
