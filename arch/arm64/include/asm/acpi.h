@@ -89,6 +89,7 @@ static inline void enable_acpi(void)
 static inline bool acpi_has_cpu_in_madt(void)
 {
 	return true;
+@@ -132,10 +132,8 @@ static inline int get_cpu_for_acpi_id(u32 uid)
 }
 
 struct acpi_madt_generic_interrupt *acpi_cpu_get_madt_gicc(int cpu);
@@ -98,10 +99,10 @@ static inline u32 get_acpi_id_for_cpu(unsigned int cpu)
 }
 
 static inline void arch_fix_phys_package_id(int num, u32 slot) { }
-void __init acpi_init_cpus(void);
+
 
 #else
-static inline void acpi_init_cpus(void) { }
+@@ -174,12 +174,6 @@ static inline pgprot_t arch_apei_get_mem_attribute(phys_addr_t addr)
 #endif /* CONFIG_ACPI */
 
 #ifdef CONFIG_ARM64_ACPI_PARKING_PROTOCOL
@@ -125,7 +126,7 @@ static inline const char *acpi_get_enable_method(int cpu)
 
 	return NULL;
 }
-
+@@ -175,11 +175,9 @@ static inline pgprot_t arch_apei_get_mem_attribute(phys_addr_t addr)
 #ifdef	CONFIG_ACPI_APEI
 /*
  * acpi_disable_cmcff is used in drivers/acpi/apei/hest.c for disabling
@@ -141,13 +142,6 @@ static inline pgprot_t arch_apei_get_mem_attribute(phys_addr_t addr)
 }
 #endif /* CONFIG_ACPI_APEI */
 
-#ifdef CONFIG_ACPI_NUMA
-int arm64_acpi_numa_init(void);
-int acpi_numa_get_nid(unsigned int cpu);
-void acpi_map_cpus_to_nodes(void);
-#else
-static inline int arm64_acpi_numa_init(void) { return -ENOSYS; }
-static inline int acpi_numa_get_nid(unsigned int cpu) { return NUMA_NO_NODE; }
 static inline void acpi_map_cpus_to_nodes(void) { }
 #endif /* CONFIG_ACPI_NUMA */
 

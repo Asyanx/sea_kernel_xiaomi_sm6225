@@ -261,11 +261,13 @@ void acpi_numa_processor_affinity_init (struct acpi_srat_cpu_affinity *pa);
 #else
 static inline void
 acpi_numa_processor_affinity_init(struct acpi_srat_cpu_affinity *pa) { }
+static inline void acpi_arch_dma_setup(struct device *dev) { }
 #endif
 
 void acpi_numa_x2apic_affinity_init(struct acpi_srat_x2apic_cpu_affinity *pa);
 
 #ifdef CONFIG_ARM64
+void acpi_map_cpus_to_nodes(void);
 void acpi_numa_gicc_affinity_init(struct acpi_srat_gicc_affinity *pa);
 #else
 static inline void
