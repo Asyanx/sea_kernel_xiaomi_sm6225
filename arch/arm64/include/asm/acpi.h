@@ -102,7 +102,7 @@ static inline void arch_fix_phys_package_id(int num, u32 slot) { }
 
 
 #else
-
+@@ -174,12 +174,6 @@ static inline pgprot_t arch_apei_get_mem_attribute(phys_addr_t addr)
 #endif /* CONFIG_ACPI */
 
 #ifdef CONFIG_ARM64_ACPI_PARKING_PROTOCOL
@@ -141,13 +141,6 @@ static inline pgprot_t arch_apei_get_mem_attribute(phys_addr_t addr)
 	return __acpi_get_mem_attribute(addr);
 }
 #endif /* CONFIG_ACPI_APEI */
-
-#ifdef CONFIG_ACPI_NUMA
-
-
-void acpi_map_cpus_to_nodes(void);
-#else
-
 
 static inline void acpi_map_cpus_to_nodes(void) { }
 #endif /* CONFIG_ACPI_NUMA */
