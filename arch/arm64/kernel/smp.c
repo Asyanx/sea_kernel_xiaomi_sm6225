@@ -572,14 +572,14 @@ acpi_parse_gic_cpu_interface(struct acpi_subtable_header *header,
 
 	return 0;
 }
-
+@@ -650,8 +650,6 @@ acpi_parse_gic_cpu_interface(union acpi_subtable_headers *header,
 static void __init acpi_parse_and_init_cpus(void)
 {
-	int i;
 
 	/*
 	 * do a walk of MADT to determine how many CPUs
 	 * we have including disabled CPUs, and get information
+  @@ -669,9 +667,6 @@ static void __init acpi_parse_and_init_cpus(void)
 	 * we need for SMP init.
 	 */
 	acpi_table_parse_madt(ACPI_MADT_TYPE_GENERIC_INTERRUPT,
@@ -595,8 +595,6 @@ static void __init acpi_parse_and_init_cpus(void)
 	 */
 	acpi_map_cpus_to_nodes();
 
-	for (i = 0; i < nr_cpu_ids; i++)
-		early_map_cpu_to_node(i, acpi_numa_get_nid(i));
 }
 #else
 #define acpi_parse_and_init_cpus(...)	do { } while (0)
