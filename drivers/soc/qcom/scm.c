@@ -28,7 +28,7 @@
 #define SCM_INTERRUPTED		1
 #define SCM_V2_EBUSY		-12
 
-static DEFINE_PER_CPU(atomic_t, scm_call_count);
+static atomic_t scm_call_count = ATOMIC_INIT(0);
 static DEFINE_MUTEX(scm_lock);
 
 /*
@@ -147,12 +147,11 @@ static int ___scm_call_armv8_64(u64 x0, u64 x1, u64 x2, u64 x3, u64 x4, u64 x5,
 static int __scm_call_armv8_64(u64 x0, u64 x1, u64 x2, u64 x3, u64 x4, u64 x5,
 				u64 *ret1, u64 *ret2, u64 *ret3)
 {
-	atomic_t *cnt = per_cpu_ptr(&scm_call_count, raw_smp_processor_id());
 	int ret;
 
-	atomic_inc(cnt);
+	atomic_inc(&scm_call_count);
 	ret = ___scm_call_armv8_64(x0, x1, x2, x3, x4, x5, ret1, ret2, ret3);
-	atomic_dec(cnt);
+	atomic_dec(&scm_call_count);
 
 	return ret;
 }
@@ -210,12 +209,11 @@ static int ___scm_call_armv8_32(u32 w0, u32 w1, u32 w2, u32 w3, u32 w4, u32 w5,
 static int __scm_call_armv8_32(u32 w0, u32 w1, u32 w2, u32 w3, u32 w4, u32 w5,
 				u64 *ret1, u64 *ret2, u64 *ret3)
 {
-	atomic_t *cnt = per_cpu_ptr(&scm_call_count, raw_smp_processor_id());
 	int ret;
 
-	atomic_inc(cnt);
+	atomic_inc(&scm_call_count);
 	ret = ___scm_call_armv8_32(w0, w1, w2, w3, w4, w5, ret1, ret2, ret3);
-	atomic_dec(cnt);
+	atomic_dec(&scm_call_count);
 
 	return ret;
 }
@@ -273,12 +271,11 @@ static int ___scm_call_armv8_32(u32 w0, u32 w1, u32 w2, u32 w3, u32 w4, u32 w5,
 static int __scm_call_armv8_32(u32 w0, u32 w1, u32 w2, u32 w3, u32 w4, u32 w5,
 				u64 *ret1, u64 *ret2, u64 *ret3)
 {
-	atomic_t *cnt = per_cpu_ptr(&scm_call_count, raw_smp_processor_id());
 	int ret;
 
-	atomic_inc(cnt);
+	atomic_inc(&scm_call_count);
 	ret = ___scm_call_armv8_32(w0, w1, w2, w3, w4, w5, ret1, ret2, ret3);
-	atomic_dec(cnt);
+	atomic_dec(&scm_call_count);
 
 	return ret;
 }
@@ -776,7 +773,7 @@ early_initcall(scm_mem_protection_init);
 
 #endif
 
-bool under_scm_call(int cpu)
+bool under_scm_call(void)
 {
-	return atomic_read(per_cpu_ptr(&scm_call_count, cpu));
+	return atomic_read(&scm_call_count);
 }
