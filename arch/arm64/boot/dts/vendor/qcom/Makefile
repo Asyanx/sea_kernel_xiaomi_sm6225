@@ -343,7 +343,7 @@ khajeg-idps-display-90hz-overlay.dtbo-base := khajeg.dtb
 spes-khaje-idp-nopmi-overlay.dtbo-base := khaje.dtb
 spesn-khaje-idp-nopmi-overlay.dtbo-base := khaje.dtb
 spes-sm5602-khaje-idp-nopmi-overlay.dtbo-base := khaje.dtb
-/* for fog still not ready // else
+ifeq ($(CONFIG_TARGET_PROJECT_K7T),y)
 dtb-$(CONFIG_ARCH_KHAJE) += khaje-idp.dtb \
 		khaje-qrd.dtb \
 		khaje-qrd-hvdcp3p5.dtb \
@@ -381,7 +381,8 @@ dtb-$(CONFIG_ARCH_KHAJE) += khaje-idp.dtb \
 		khajeg-idp-nopmi.dtb \
 		khajeg-idp-usbc.dtb \
 		khajeg-idp-pm8010.dtb \
-		khajeg-idps-display-90hz.dtb */
+		khajeg-idps-display-90hz.dtb
+endif
 endif
 
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
