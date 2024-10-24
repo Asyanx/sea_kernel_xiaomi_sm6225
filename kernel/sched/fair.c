@@ -4514,6 +4514,7 @@ static inline int task_fits_capacity(struct task_struct *p, long capacity)
 
 static inline bool task_fits_max(struct task_struct *p, int cpu)
 {
+#ifdef CONFIG_SCHED_WALT
 	unsigned long capacity = capacity_orig_of(cpu);
 	unsigned long max_capacity = cpu_rq(cpu)->rd->max_cpu_capacity.val;
 	unsigned long task_boost = per_task_boost(p);
@@ -4532,10 +4533,14 @@ static inline bool task_fits_max(struct task_struct *p, int cpu)
 	}
 
 	return task_fits_capacity(p, capacity, cpu);
+#else
+	return false;
+#endif
 }
 
 static inline bool task_demand_fits(struct task_struct *p, int cpu)
 {
+#ifdef CONFIG_SCHED_WALT
 	unsigned long capacity = capacity_orig_of(cpu);
 	unsigned long max_capacity = cpu_rq(cpu)->rd->max_cpu_capacity.val;
 
@@ -4543,6 +4548,9 @@ static inline bool task_demand_fits(struct task_struct *p, int cpu)
 		return true;
 
 	return task_fits_capacity(p, capacity, cpu);
+#else
+	return false;
+#endif
 }
 
 struct find_best_target_env {
@@ -4609,8 +4617,11 @@ static inline void update_misfit_status(struct task_struct *p, struct rq *rq)
 		rq->misfit_task_load = 0;
 		return;
 	}
-
+#ifdef CONFIG_SCHED_WALT
 	if (task_fits_max(p, cpu_of(rq))) {
+#else
+        if (task_fits_capacity(p, cpu_of(rq))) {
+#endif
 		rq->misfit_task_load = 0;
 		return;
 	}
@@ -5906,7 +5917,7 @@ static inline void hrtick_update(struct rq *rq)
 
 #ifdef CONFIG_SMP
 static unsigned long capacity_of(int cpu);
-
+#ifdef CONFIG_SCHED_WALT
 bool __cpu_overutilized(int cpu, int delta)
 {
 	return (capacity_orig_of(cpu) * 1024) <
@@ -5924,6 +5935,7 @@ bool cpu_overutilized(int cpu)
 }
 #endif
 
+#ifdef CONFIG_SCHED_WALT
 static bool sd_overutilized(struct sched_domain *sd)
 {
 	return sd->shared->overutilized;
@@ -5940,9 +5952,10 @@ static void clear_sd_overutilized(struct sched_domain *sd)
 	trace_sched_overutilized(sd, sd->shared->overutilized, false);
 	sd->shared->overutilized = false;
 }
-
+#endif
 static inline void update_overutilized_status(struct rq *rq)
 {
+#ifdef CONFIG_SCHED_WALT
 	struct sched_domain *sd;
 
 	rcu_read_lock();
@@ -5951,6 +5964,11 @@ static inline void update_overutilized_status(struct rq *rq)
 	    cpu_overutilized(rq->cpu))
 		set_sd_overutilized(sd);
 	rcu_read_unlock();
+#else
+	if (!READ_ONCE(rq->rd->overutilized) && cpu_overutilized(rq->cpu)) {
+		WRITE_ONCE(rq->rd->overutilized, SG_OVERUTILIZED);
+	}
+#endif
 }
 #else
 static inline void update_overutilized_status(struct rq *rq) { }
@@ -7172,8 +7190,11 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, int t
 	for_each_cpu_wrap(cpu, cpus, target) {
 		if (!--nr)
 			return -1;
+	/* Don't need to rebalance while attached to NULL domain */
+#ifdef CONFIG_SCHED_WALT
 		if (cpu_isolated(cpu))
 			continue;
+#endif
 		if (available_idle_cpu(cpu) || sched_idle_cpu(cpu))
 			break;
 	}
@@ -7482,6 +7503,7 @@ static inline bool is_many_wakeup(int sibling_count_hint)
 
 static int get_start_cpu(struct task_struct *p, bool sync_boost)
 {
+#ifdef CONFIG_SCHED_WALT
 	struct root_domain *rd = cpu_rq(smp_processor_id())->rd;
 	int start_cpu = rd->min_cap_orig_cpu;
 	int task_boost = per_task_boost(p);
@@ -7508,6 +7530,9 @@ static int get_start_cpu(struct task_struct *p, bool sync_boost)
 	if (task_boost > TASK_BOOST_ON_MID) {
 		start_cpu = rd->max_cap_orig_cpu;
 		return start_cpu;
+#else
+	return smp_processor_id();
+#endif
 	}
 
 	if (sync_boost && rd->mid_cap_orig_cpu != -1)
@@ -7565,7 +7590,9 @@ static void find_best_target(struct sched_domain *sd, cpumask_t *cpus,
 	int prev_cpu = task_cpu(p);
 	bool next_group_higher_cap = false;
 	int isolated_candidate = -1;
+#ifdef CONFIG_SCHED_WALT
 	int mid_cap_orig_cpu = cpu_rq(smp_processor_id())->rd->mid_cap_orig_cpu;
+#endif
 	struct task_struct *curr_tsk;
 	bool prioritized_task = prefer_high_cap && p->prio <= DEFAULT_PRIO;
 
