@@ -11727,8 +11727,9 @@ static inline int find_energy_aware_new_ilb(void)
 
 	cpumask_and(&idle_cpus, nohz.idle_cpus_mask,
 			housekeeping_cpumask(HK_FLAG_MISC));
+#ifdef CONFIG_SCHED_WALT
 	cpumask_andnot(&idle_cpus, &idle_cpus, cpu_isolated_mask);
-
+#endif
 	sg = sd->groups;
 	do {
 		int i;
@@ -11867,9 +11868,15 @@ static void nohz_balancer_kick(struct rq *rq)
 	 * None are in tickless mode and hence no need for NOHZ idle load
 	 * balancing.
 	 */
+#ifdef CONFIG_SCHED_WALT
 	cpumask_andnot(&cpumask, nohz.idle_cpus_mask, cpu_isolated_mask);
 	if (cpumask_empty(&cpumask))
 		return;
+else
+	cpumask_copy(&cpumask, nohz.idle_cpus_mask);
+	if (likely(!atomic_read(&nohz.nr_cpus)))
+		return;
+#endif
 
 	if (READ_ONCE(nohz.has_blocked) &&
 	    time_after(now, READ_ONCE(nohz.next_blocked)))
@@ -12085,9 +12092,11 @@ static bool _nohz_idle_balance(struct rq *this_rq, unsigned int flags,
 	 * store from nohz_balance_enter_idle().
 	 */
 	smp_mb();
-
+#ifdef CONFIG_SCHED_WALT
 	cpumask_andnot(&cpus, nohz.idle_cpus_mask, cpu_isolated_mask);
-
+#else
+	cpumask_copy(&cpus, nohz.idle_cpus_mask);
+#endif
 	for_each_cpu(balance_cpu, &cpus) {
 		if (balance_cpu == this_cpu || !idle_cpu(balance_cpu))
 			continue;
@@ -12285,11 +12294,10 @@ static int idle_balance(struct rq *this_rq, struct rq_flags *rf)
 				sysctl_sched_force_lb_enable &&
 				(atomic_read(&this_rq->nr_iowait) == 0));
 #endif
-
-
+#ifdef CONFIG_SCHED_WALT
 	if (cpu_isolated(this_cpu))
 		return 0;
-
+#endif
 	/*
 	 * There is a task waiting to run. No need to search for one.
 	 * Return 0; the task will be enqueued when switching to idle.
@@ -12426,7 +12434,7 @@ static __latent_entropy void run_rebalance_domains(struct softirq_action *h)
 	struct rq *this_rq = this_rq();
 	enum cpu_idle_type idle = this_rq->idle_balance ?
 						CPU_IDLE : CPU_NOT_IDLE;
-
+#ifdef CONFIG_SCHED_WALT
 	/*
 	 * Since core isolation doesn't update nohz.idle_cpus_mask, there
 	 * is a possibility this nohz kicked cpu could be isolated. Hence
@@ -12434,7 +12442,7 @@ static __latent_entropy void run_rebalance_domains(struct softirq_action *h)
 	 */
 	if (cpu_isolated(this_rq->cpu))
 		return;
-
+#endif
 	/*
 	 * If this CPU has a pending nohz_balance_kick, then do the
 	 * balancing on behalf of the other idle CPUs whose ticks are
@@ -12455,13 +12463,18 @@ static __latent_entropy void run_rebalance_domains(struct softirq_action *h)
  * Trigger the SCHED_SOFTIRQ if it is time to do periodic load balancing.
  */
 void trigger_load_balance(struct rq *rq)
-{
+}
+#ifdef CONFIG_SCHED_WALT
+
 	/* Don't need to rebalance while attached to NULL domain or
 	 * cpu is isolated.
 	 */
 	if (unlikely(on_null_domain(rq)) || cpu_isolated(cpu_of(rq)))
 		return;
-
+#else
+	/* Don't need to rebalance while attached to NULL domain */
+	if (unlikely(on_null_domain(rq)))
+#endif
 	if (time_after_eq(jiffies, rq->next_balance))
 		raise_softirq(SCHED_SOFTIRQ);
 
@@ -13276,7 +13289,9 @@ kick_active_balance(struct rq *rq, struct task_struct *p, int new_cpu)
 		rq->active_balance = 1;
 		rq->push_cpu = new_cpu;
 		get_task_struct(p);
+#ifdef CONFIG_SCHED_WALT
 		rq->push_task = p;
+#endif
 		rc = 1;
 	}
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
