@@ -977,7 +977,6 @@ struct sched_entity *__pick_last_entity(struct cfs_rq *cfs_rq)
 
 	return __node_2_se(last);
 }
-#endif
 
 /**************************************************************
  * Scheduling class statistics methods:
@@ -1000,6 +999,7 @@ int sched_proc_update_handler(struct ctl_table *table, int write,
 
 	return 0;
 }
+#endif
 
 static void clear_buddies(struct cfs_rq *cfs_rq, struct sched_entity *se);
 
@@ -7535,9 +7535,6 @@ static int get_start_cpu(struct task_struct *p, bool sync_boost)
 	if (task_boost > TASK_BOOST_ON_MID) {
 		start_cpu = rd->max_cap_orig_cpu;
 		return start_cpu;
-#else
-	return smp_processor_id();
-#endif
 	}
 
 	if (sync_boost && rd->mid_cap_orig_cpu != -1)
@@ -11843,9 +11840,7 @@ static int active_load_balance_cpu_stop(void *data)
 
 #ifdef CONFIG_SCHED_WALT
 	push_task = busiest_rq->push_task;
-#endif
 	target_cpu = busiest_rq->push_cpu;
-#ifdef CONFIG_SCHED_WALT
 	if (push_task) {
 		if (task_on_rq_queued(push_task) &&
 			push_task->state == TASK_RUNNING &&
@@ -11897,21 +11892,22 @@ out_unlock:
 	busiest_rq->active_balance = 0;
 #ifdef CONFIG_SCHED_WALT
 	push_task = busiest_rq->push_task;
+#endif
 	target_cpu = busiest_rq->push_cpu;
 	clear_reserved(target_cpu);
-
+#ifdef CONFIG_SCHED_WALT
 	if (push_task)
 		busiest_rq->push_task = NULL;
 #endif
 
 	rq_unlock(busiest_rq, &rf);
-
+#ifdef CONFIG_SCHED_WALT
 	if (push_task) {
 		if (push_task_detached)
 			attach_one_task(target_rq, push_task);
 		put_task_struct(push_task);
 	}
-
+#endif
 	if (p)
 		attach_one_task(target_rq, p);
 
