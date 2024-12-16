@@ -50,15 +50,14 @@ ccflags-y += -DEXPECTED_HASH=\"$(KSU_EXPECTED_HASH)\"
 
 ifeq ($(shell grep -q "int path_umount" $(srctree)/fs/namespace.c; echo $$?),0)
 ccflags-y += -DKSU_UMOUNT
-else
-$(info -- Did you know you can backport path_umount to fs/namespace.c from 5.9?)
-$(info -- Read: https://kernelsu.org/guide/how-to-integrate-for-non-gki.html#how-to-backport-path-umount)
 endif
 
 ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
 
 ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)
+$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '^#define SUSFS_VERSION' | cut -d' ' -f3 | sed 's/"//g'))
+$(info -- SUSFS_VERSION: $(SUSFS_VERSION))
 ifdef KSU_SUSFS
 ccflags-y += -DKSU_SUSFS
 endif
@@ -68,29 +67,41 @@ endif
 ifdef KSU_SUSFS_SUS_MOUNT
 ccflags-y += -DKSU_SUSFS_SUS_MOUNT
 endif
-ifdef KSU_SUSFS_SUS_MOUNT_MNT_ID_REORDER
-ccflags-y += -DKSU_SUSFS_SUS_MOUNT_MNT_ID_REORDER
+ifdef KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+ccflags-y += -DKSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+endif
+ifdef KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+ccflags-y += -DKSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
 endif
 ifdef KSU_SUSFS_SUS_KSTAT
 ccflags-y += -DKSU_SUSFS_SUS_KSTAT
 endif
-ifdef KSU_SUSFS_SUS_MAPS
-ccflags-y += -DKSU_SUSFS_SUS_MAPS
-endif
-ifdef KSU_SUSFS_SUS_PROC_FD_LINK
-ccflags-y += -DKSU_SUSFS_SUS_PROC_FD_LINK
-endif
-ifdef KSU_SUSFS_SUS_MEMFD
-ccflags-y += -DKSU_SUSFS_SUS_MEMFD
+ifdef KSU_SUSFS_SUS_OVERLAYFS
+ccflags-y += -DKSU_SUSFS_SUS_OVERLAYFS
 endif
 ifdef KSU_SUSFS_TRY_UMOUNT
 ccflags-y += -DKSU_SUSFS_TRY_UMOUNT
+endif
+ifdef KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+ccflags-y += -DKSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
 endif
 ifdef KSU_SUSFS_SPOOF_UNAME
 ccflags-y += -DKSU_SUSFS_SPOOF_UNAME
 endif
 ifdef KSU_SUSFS_ENABLE_LOG
 ccflags-y += -DKSU_SUSFS_ENABLE_LOG
+endif
+ifdef KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+ccflags-y += -DKSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+endif
+ifdef KSU_SUSFS_SPOOF_PROC_CMDLINE
+ccflags-y += -DKSU_SUSFS_SPOOF_PROC_CMDLINE
+endif
+ifdef KSU_SUSFS_OPEN_REDIRECT
+ccflags-y += -DKSU_SUSFS_OPEN_REDIRECT
+endif
+ifdef KSU_SUSFS_SUS_SU
+ccflags-y += -DKSU_SUSFS_SUS_SU
 endif
 else
 $(info -- You have not integrate susfs in your kernel.)
