@@ -1982,7 +1982,6 @@ static void thermal_exit(void)
 	of_thermal_destroy_zones();
 	destroy_workqueue(thermal_passive_wq);
 	destroy_thermal_message_node();
-#endif
 	class_unregister(&thermal_class);
 	thermal_unregister_governors();
 	ida_destroy(&thermal_tz_ida);
