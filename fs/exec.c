@@ -1758,11 +1758,6 @@ static int exec_binprm(struct linux_binprm *bprm)
 	return ret;
 }
 
-#ifdef CONFIG_KSU
-extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
-			                   void *envp, int *flags);
-#endif
-
 /*
  * sys_execve() executes a new program.
  */
@@ -1776,17 +1771,8 @@ static int __do_execve_file(int fd, struct filename *filename,
 	struct files_struct *displaced;
 	int retval;
 
-#ifdef CONFIG_KSU
-	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-#endif
-
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
-
-#ifdef CONFIG_KSU_SUSFS_SUS_SU
-	if (susfs_is_sus_su_hooks_enabled)
-		ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
-#endif
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from
@@ -1964,12 +1950,26 @@ int do_execve_file(struct file *file, void *__argv, void *__envp)
 	return __do_execve_file(AT_FDCWD, NULL, argv, envp, 0, file);
 }
 
+#ifdef CONFIG_KSU
+extern bool ksu_execveat_hook __read_mostly;
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+			                   void *envp, int *flags);
+extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
+                                        void *argv, void *envp, int *flags);
+#endif
+
 int do_execve(struct filename *filename,
 	const char __user *const __user *__argv,
 	const char __user *const __user *__envp)
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
+#ifdef CONFIG_KSU
+	if (unlikely(ksu_execveat_hook))
+			ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, NULL);
+	else
+			ksu_handle_execveat_sucompat((int *)AT_FDCWD, &filename, NULL, NULL, NULL);
+#endif
 	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
 }
 
@@ -1980,7 +1980,6 @@ int do_execveat(int fd, struct filename *filename,
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
-
 	return do_execveat_common(fd, filename, argv, envp, flags);
 }
 
@@ -1997,6 +1996,12 @@ static int compat_do_execve(struct filename *filename,
 		.is_compat = true,
 		.ptr.compat = __envp,
 	};
+
+#ifdef CONFIG_KSU
+	if (!ksu_execveat_hook)
+			ksu_handle_execveat_sucompat((int *)AT_FDCWD, &filename, NULL, NULL, NULL); /* 32-bit support */
+#endif
+
 	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
 }
 
