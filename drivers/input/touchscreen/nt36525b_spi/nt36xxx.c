@@ -2953,9 +2953,9 @@ static void __exit nvt_driver_exit(void)
 }
 
 #if defined(CONFIG_DRM_PANEL)
-device_initcall_sync(nvt_driver_init);
+late_initcall(nvt_driver_init);
 #else
-device_initcall_sync(nvt_driver_init);
+late_initcall(nvt_driver_init);
 #endif
 
 //device_initcall(nvt_driver_init);
