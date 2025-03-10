@@ -70,8 +70,8 @@ extern touchscreen_usb_plugin_data_t g_touchscreen_usb_pulgin;
 * Global variable or extern global variabls/functions
 *****************************************************************************/
 struct fts_ts_data *fts_data;
-static bool delay_gesture = false;
 extern void set_fts_ts_variant(bool en);
+static bool delay_gesture = false;
 extern void set_lcd_reset_gpio_keep_high(bool en);
 
 int lct_fts_tp_gesture_callback(bool flag)
@@ -82,14 +82,16 @@ int lct_fts_tp_gesture_callback(bool flag)
         FTS_INFO("The gesture mode will be %s the next time you wakes up.", flag?"enabled":"disabled");
         return -1;
     }
-    //check this funct
-    set_lcd_reset_gpio_keep_high(flag);
+     //check this funct
+    set_lct_tp_gesture_status(flag);
+    //set_lcd_reset_gpio_keep_high(flag);
     if (flag) {
-            ts_data->gesture_mode = ENABLE;
+        	ts_data->gesture_mode = ENABLE;
+			
 	}
     else {
-        ts_data->gesture_mode = DISABLE;
-    }
+        	ts_data->gesture_mode = DISABLE;
+	 }
     return 0;
 }
 
@@ -1453,6 +1455,17 @@ static int fts_ts_probe_entry(struct fts_ts_data *ts_data)
         goto err_irq_req;
     }
 
+    ret = fts_create_apk_debug_channel(ts_data);
+    if (ret) {
+        FTS_ERROR("create apk debug node fail");
+    }
+
+	//longcheer touch procfs
+	ret = lct_create_procfs(ts_data);
+	if (ret < 0) {
+		FTS_ERROR("create procfs node fail");
+	}
+
     ret = fts_create_sysfs(ts_data);
     if (ret) {
         FTS_ERROR("create sysfs node fail");
@@ -1474,6 +1487,13 @@ static int fts_ts_probe_entry(struct fts_ts_data *ts_data)
     if (ret) {
         FTS_ERROR("init gesture fail");
     }
+
+#if FTS_TEST_EN
+    ret = fts_test_init(ts_data);
+    if (ret) {
+        FTS_ERROR("init production test fail");
+    }
+#endif
 
 #if FTS_ESDCHECK_EN
     ret = fts_esdcheck_init(ts_data);
@@ -1564,10 +1584,19 @@ static int fts_ts_remove_entry(struct fts_ts_data *ts_data)
     fts_point_report_check_exit(ts_data);
 #endif
 
+    fts_release_apk_debug_channel(ts_data);
+
+	//remove longcheer procfs
+	lct_remove_procfs(ts_data);
+
     fts_remove_sysfs(ts_data);
     fts_ex_mode_exit(ts_data);
 
     fts_fwupg_exit(ts_data);
+
+#if FTS_TEST_EN
+    fts_test_exit(ts_data);
+#endif
 
 #if FTS_ESDCHECK_EN
     fts_esdcheck_exit(ts_data);
@@ -1612,6 +1641,7 @@ static int fts_ts_suspend(struct device *dev)
     struct fts_ts_data *ts_data = fts_data;
 
     FTS_FUNC_ENTER();
+    FTS_INFO("start tp suspend");
     if (ts_data->suspended) {
         FTS_INFO("Already in suspend state");
         return 0;
@@ -1645,7 +1675,7 @@ static int fts_ts_suspend(struct device *dev)
 #endif
         }
         /* touch reset gpio pull down */
-        // gpio_direction_output(fts_data->pdata->reset_gpio, 0 );
+//      gpio_direction_output(fts_data->pdata->reset_gpio, 0 );
     }
 
     fts_release_all_finger();
@@ -1659,11 +1689,19 @@ static int fts_ts_resume(struct device *dev)
     struct fts_ts_data *ts_data = fts_data;
 
     FTS_FUNC_ENTER();
+	FTS_INFO("start to enter tp resume");
     if (!ts_data->suspended) {
         FTS_DEBUG("Already in awake state");
         return 0;
     }
-
+	/* For 1.8v no electricity */
+/*
+#if defined(CONFIG_TOUCHSCREEN_COMMON)
+    if(!tpd_gesture_flag)
+	tpd_spi_cs_gpio_output(1);
+#endif
+*/
+//check this
     /* if gesture_mode enabled, touch reset gpio pull up */
     if (!ts_data->gesture_mode)
         gpio_direction_output(fts_data->pdata->reset_gpio, 1 );
@@ -1696,7 +1734,14 @@ static int fts_ts_resume(struct device *dev)
         delay_gesture = false;
     }
 
-	fts_irq_enable();
+#if LCT_TP_WORK_EN
+	if (get_lct_tp_work_status())
+		fts_irq_enable();
+	else
+		FTS_ERROR("Touchscreen Disabled, Can't enable irq.");
+#else
+		fts_irq_enable();
+#endif
 
 #if LCT_TP_USB_PLUGIN
 	if (g_touchscreen_usb_pulgin.valid)
@@ -1820,7 +1865,7 @@ static int __init fts_ts_init(void)
 		FTS_ERROR("saved_command_line ERROR!");
 		return -ENOMEM;
 	} else {
-		if (strnstr(saved_command_line, "c3q_43_03_0b", strlen(saved_command_line)) != NULL) {
+		if (strnstr(saved_command_line, "c3q_43_03_0b", 2048) != NULL) {
 			FTS_INFO("TP info: [Vendor]xinli [IC]ft8006s");
 		} else {
 			FTS_ERROR("Unknown Touch");
@@ -1849,7 +1894,7 @@ static void __exit fts_ts_exit(void)
 }
 
 //module_init(fts_ts_init);
-device_initcall_sync(fts_ts_init);
+late_initcall(fts_ts_init);
 module_exit(fts_ts_exit);
 
 MODULE_AUTHOR("FocalTech Driver Team");
