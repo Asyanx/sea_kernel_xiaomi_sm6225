@@ -58,7 +58,6 @@ static char __user *ksud_user_path(void)
 int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
 			 int *__unused_flags)
 {
-	
 	const char su[] = SU_PATH;
 
 	if (!ksu_faccessat_hook) {
@@ -217,6 +216,7 @@ int ksu_handle_devpts(struct inode *inode)
 	return 0;
 }
 
+// sucompat: permited process can execute 'su' to gain root access.
 void ksu_sucompat_init()
 {
 	ksu_faccessat_hook = true;
@@ -235,6 +235,5 @@ void ksu_sucompat_exit()
 	ksu_stat_hook = false;
 	pr_info("stop stat hook\n");
 	ksu_devpts_hook = false;
-	pr_info("stop devpts hook\n");
-	pr_info("ksu_sucompat_exit!\n");
+	pr_info("ksu_sucompat_exit: hooks disabled: execve/execveat_su, faccessat, stat, devpts\n");
 }
