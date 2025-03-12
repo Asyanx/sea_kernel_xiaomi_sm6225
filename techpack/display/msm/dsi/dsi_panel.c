@@ -2281,17 +2281,6 @@ static int dsi_panel_parse_reset_sequence(struct dsi_panel *panel)
 
 	if (panel->host_config.ext_bridge_mode)
 		return 0;
-<<<<<<< HEAD
-	
-#ifdef CONFIG_TARGET_PROJECT_C3Q
-	fts_reset_seq = utils->read_bool(utils->data,
-		"qcom,mdss-dsi-focaltech-reset-sequence");
-	
-	if (fts_ts_variant && !fts_reset_seq) 
-		return 0;
-#endif
-=======
->>>>>>> d18a07d3aa7c (techpack/display: dsi: Adapt more for Xiaomi C3Q device)
 
 	arr = utils->get_property(utils->data,
 			"qcom,mdss-dsi-reset-sequence", &length);
@@ -3765,15 +3754,8 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 	if (rc)
 		goto error;
 
-<<<<<<< HEAD
-	#ifdef CONFIG_TARGET_PROJECT_C3Q
-	else {
-		 
-               	//Because node in nvt_ts failed to count>0 
-=======
 	#ifdef CONFIG_TARGET_PROJECT_C3Q /* Because node in nvt_ts failed to count>0 */
 	else {
->>>>>>> d18a07d3aa7c (techpack/display: dsi: Adapt more for Xiaomi C3Q device)
 		lcd_active_panel = &panel->drm_panel;
 	}
 	#endif
