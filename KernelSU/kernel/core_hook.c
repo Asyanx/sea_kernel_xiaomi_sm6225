@@ -5,7 +5,12 @@
 #include <linux/init.h>
 #include <linux/init_task.h>
 #include <linux/kernel.h>
+#include <linux/binfmts.h>
+
+#ifdef CONFIG_KSU_LSM_SECURITY_HOOKS
 #include <linux/lsm_hooks.h>
+#endif
+
 #include <linux/nsproxy.h>
 #include <linux/path.h>
 #include <linux/printk.h>
@@ -14,16 +19,17 @@
 #include <linux/uidgid.h>
 #include <linux/version.h>
 #include <linux/mount.h>
-
 #include <linux/fs.h>
 #include <linux/namei.h>
+#if !(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)) && !defined(KSU_HAS_PATH_UMOUNT) 
+#include <linux/syscalls.h> // sys_umount
+#endif
 
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs.h>
 #endif // #ifdef CONFIG_KSU_SUSFS
 
 #include "allowlist.h"
-#include "arch.h"
 #include "core_hook.h"
 #include "klog.h" // IWYU pragma: keep
 #include "ksu.h"
@@ -55,15 +61,6 @@ extern void susfs_run_try_umount_for_current_mnt_ns(void);
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 static bool susfs_is_umount_for_zygote_system_process_enabled = false;
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-extern bool susfs_is_auto_add_sus_bind_mount_enabled;
-#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-extern bool susfs_is_auto_add_sus_ksu_default_mount_enabled;
-#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
-extern bool susfs_is_auto_add_try_umount_for_bind_mount_enabled;
-#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
 
 static inline void susfs_on_post_fs_data(void) {
 	struct path path;
@@ -74,32 +71,19 @@ static inline void susfs_on_post_fs_data(void) {
 	}
 	pr_info("susfs_is_umount_for_zygote_system_process_enabled: %d\n", susfs_is_umount_for_zygote_system_process_enabled);
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-	if (!kern_path(DATA_ADB_NO_AUTO_ADD_SUS_BIND_MOUNT, 0, &path)) {
-		susfs_is_auto_add_sus_bind_mount_enabled = false;
-		path_put(&path);
-	}
-	pr_info("susfs_is_auto_add_sus_bind_mount_enabled: %d\n", susfs_is_auto_add_sus_bind_mount_enabled);
-#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-	if (!kern_path(DATA_ADB_NO_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT, 0, &path)) {
-		susfs_is_auto_add_sus_ksu_default_mount_enabled = false;
-		path_put(&path);
-	}
-	pr_info("susfs_is_auto_add_sus_ksu_default_mount_enabled: %d\n", susfs_is_auto_add_sus_ksu_default_mount_enabled);
-#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
-	if (!kern_path(DATA_ADB_NO_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT, 0, &path)) {
-		susfs_is_auto_add_try_umount_for_bind_mount_enabled = false;
-		path_put(&path);
-	}
-	pr_info("susfs_is_auto_add_try_umount_for_bind_mount_enabled: %d\n", susfs_is_auto_add_try_umount_for_bind_mount_enabled);
-#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
 }
 
 #endif // #ifdef CONFIG_KSU_SUSFS
 
+#ifdef CONFIG_KSU_LSM_SECURITY_HOOKS
+#define LSM_HANDLER_TYPE static int
+#else
+#define LSM_HANDLER_TYPE int
+#endif
+
 static bool ksu_module_mounted = false;
+static unsigned int ksu_unmountable_count = 0;
+static bool boot_complete_lock __read_mostly = false;
 
 extern int ksu_handle_sepolicy(unsigned long arg3, void __user *arg4);
 
@@ -166,6 +150,7 @@ static void setup_groups(struct root_profile *profile, struct cred *cred)
 
 	groups_sort(group_info);
 	set_groups(cred, group_info);
+	put_group_info(group_info);
 }
 
 static void disable_seccomp()
@@ -182,7 +167,9 @@ static void disable_seccomp()
 #ifdef CONFIG_SECCOMP
 	current->seccomp.mode = 0;
 	current->seccomp.filter = NULL;
-#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+	atomic_set(&current->seccomp.filter_count, 0);
+#endif
 #endif
 }
 
@@ -190,18 +177,17 @@ void ksu_escape_to_root(void)
 {
 	struct cred *cred;
 
-	rcu_read_lock();
-
-	do {
-		cred = (struct cred *)__task_cred((current));
-		BUG_ON(!cred);
-	} while (!get_cred_rcu(cred));
-
-	if (cred->euid.val == 0) {
+	if (current_euid().val == 0) {
 		pr_warn("Already root, don't escape!\n");
-		rcu_read_unlock();
 		return;
 	}
+
+	cred = prepare_creds();
+	if (!cred) {
+		pr_warn("prepare_creds failed!\n");
+		return;
+	}
+
 	struct root_profile *profile = ksu_get_root_profile(cred->uid.val);
 
 	cred->uid.val = profile->uid;
@@ -232,7 +218,7 @@ void ksu_escape_to_root(void)
 
 	setup_groups(profile, cred);
 
-	rcu_read_unlock();
+	commit_creds(cred);
 
 	// Refer to kernel/seccomp.c: seccomp_set_mode_strict
 	// When disabling Seccomp, ensure that current->sighand->siglock is held during the operation.
@@ -243,7 +229,7 @@ void ksu_escape_to_root(void)
 	ksu_setup_selinux(profile->selinux_domain);
 }
 
-int ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry)
+LSM_HANDLER_TYPE ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry)
 {
 	if (!current->mm) {
 		// skip kernel threads
@@ -282,6 +268,7 @@ int ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry)
 	return 0;
 }
 
+#if defined(CONFIG_EXT4_FS) && ( LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0) || defined(KSU_HAS_MODERN_EXT4) )
 static void nuke_ext4_sysfs() {
 	struct path path;
 	int err = kern_path("/data/adb/modules", 0, &path);
@@ -294,13 +281,28 @@ static void nuke_ext4_sysfs() {
 	const char* name = sb->s_type->name;
 	if (strcmp(name, "ext4") != 0) {
 		pr_info("nuke but module aren't mounted\n");
+		path_put(&path);
 		return;
 	}
 
 	ext4_unregister_sysfs(sb);
+	path_put(&path);
+}
+#else
+static void nuke_ext4_sysfs() { }
+#endif
+
+static bool is_system_bin_su()
+{
+	// YES in_execve becomes 0 when it succeeds.
+	if (!current->mm || current->in_execve) 
+		return false;
+
+	// quick af check
+	return (current->mm->exe_file && !strcmp(current->mm->exe_file->f_path.dentry->d_name.name, "su"));
 }
 
-int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
+LSM_HANDLER_TYPE ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 		     unsigned long arg4, unsigned long arg5)
 {
 	// if success, we modify the arg5 as result!
@@ -322,7 +324,8 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 	bool from_root = 0 == current_uid().val;
 	bool from_manager = ksu_is_manager();
 
-	if (!from_root && !from_manager) {
+	if (!from_root && !from_manager 
+		&& !(is_allow_su() && is_system_bin_su())) {
 		// only root or manager can access this interface
 		return 0;
 	}
@@ -359,8 +362,8 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 			pr_err("prctl reply error, cmd: %lu\n", arg2);
 		}
 		u32 version_flags = 0;
-		version_flags |= 0x0;
-		if (arg4 && copy_to_user(arg4, &version_flags, sizeof(version_flags))) {
+		if (arg4 &&
+		    copy_to_user(arg4, &version_flags, sizeof(version_flags))) {
 			pr_err("prctl reply error, cmd: %lu\n", arg2);
 		}
 		return 0;
@@ -384,7 +387,6 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 			break;
 		}
 		case EVENT_BOOT_COMPLETED: {
-			static bool boot_complete_lock = false;
 			if (!boot_complete_lock) {
 				boot_complete_lock = true;
 				pr_info("boot_complete triggered\n");
@@ -468,6 +470,40 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 		return 0;
 	}
 
+	if (arg2 == CMD_GET_MANAGER_UID) {
+		uid_t manager_uid = ksu_get_manager_uid();
+		if (copy_to_user(arg3, &manager_uid, sizeof(manager_uid))) {
+			pr_err("get manager uid failed\n");
+		}
+		if (copy_to_user(result, &reply_ok, sizeof(reply_ok))) {
+			pr_err("prctl reply error, cmd: %lu\n", arg2);
+		}
+		return 0;
+	}
+
+	if (arg2 == CMD_ENABLE_SU) {
+		bool enabled = (arg3 != 0);
+		if (enabled == ksu_su_compat_enabled) {
+			pr_info("cmd enable su but no need to change.\n");
+			if (copy_to_user(result, &reply_ok, sizeof(reply_ok))) {// return the reply_ok directly
+				pr_err("prctl reply error, cmd: %lu\n", arg2);
+			}
+			return 0;
+		}
+
+		if (enabled) {
+			ksu_sucompat_init();
+		} else {
+			ksu_sucompat_exit();
+		}
+		ksu_su_compat_enabled = enabled;
+
+		if (copy_to_user(result, &reply_ok, sizeof(reply_ok))) {
+			pr_err("prctl reply error, cmd: %lu\n", arg2);
+		}
+		return 0;
+	}
+
 #ifdef CONFIG_KSU_SUSFS
 	if (current_uid_val == 0) {
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
@@ -506,56 +542,6 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 			return 0;
 		}
 #endif //#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-		if (arg2 == CMD_SUSFS_ADD_SUS_KSTAT) {
-			int error = 0;
-			if (!ksu_access_ok((void __user*)arg3, sizeof(struct st_susfs_sus_kstat))) {
-				pr_err("susfs: CMD_SUSFS_ADD_SUS_KSTAT -> arg3 is not accessible\n");
-				return 0;
-			}
-			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
-				pr_err("susfs: CMD_SUSFS_ADD_SUS_KSTAT -> arg5 is not accessible\n");
-				return 0;
-			}
-			error = susfs_add_sus_kstat((struct st_susfs_sus_kstat __user*)arg3);
-			pr_info("susfs: CMD_SUSFS_ADD_SUS_KSTAT -> ret: %d\n", error);
-			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
-				pr_info("susfs: copy_to_user() failed\n");
-			return 0;
-		}
-		if (arg2 == CMD_SUSFS_UPDATE_SUS_KSTAT) {
-			int error = 0;
-			if (!ksu_access_ok((void __user*)arg3, sizeof(struct st_susfs_sus_kstat))) {
-				pr_err("susfs: CMD_SUSFS_UPDATE_SUS_KSTAT -> arg3 is not accessible\n");
-				return 0;
-			}
-			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
-				pr_err("susfs: CMD_SUSFS_UPDATE_SUS_KSTAT -> arg5 is not accessible\n");
-				return 0;
-			}
-			error = susfs_update_sus_kstat((struct st_susfs_sus_kstat __user*)arg3);
-			pr_info("susfs: CMD_SUSFS_UPDATE_SUS_KSTAT -> ret: %d\n", error);
-			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
-				pr_info("susfs: copy_to_user() failed\n");
-			return 0;
-		}
-		if (arg2 == CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY) {
-			int error = 0;
-			if (!ksu_access_ok((void __user*)arg3, sizeof(struct st_susfs_sus_kstat))) {
-				pr_err("susfs: CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY -> arg3 is not accessible\n");
-				return 0;
-			}
-			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
-				pr_err("susfs: CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY -> arg5 is not accessible\n");
-				return 0;
-			}
-			error = susfs_add_sus_kstat((struct st_susfs_sus_kstat __user*)arg3);
-			pr_info("susfs: CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY -> ret: %d\n", error);
-			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
-				pr_info("susfs: copy_to_user() failed\n");
-			return 0;
-        }
-#endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
 		if (arg2 == CMD_SUSFS_ADD_TRY_UMOUNT) {
 			int error = 0;
@@ -568,9 +554,12 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 				return 0;
 			}
 			error = susfs_add_try_umount((struct st_susfs_try_umount __user*)arg3);
-			pr_info("susfs: CMD_SUSFS_ADD_TRY_UMOUNT -> ret: %d\n", error);
 			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
 				pr_info("susfs: copy_to_user() failed\n");
+			else {
+				ksu_unmountable_count++;
+				pr_info("susfs: CMD_SUSFS_ADD_TRY_UMOUNT -> ret: %d, count: %d\n", error, ksu_unmountable_count);
+			}
 			return 0;
 		}
 		if (arg2 == CMD_SUSFS_RUN_UMOUNT_FOR_CURRENT_MNT_NS) {
@@ -610,42 +599,6 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 			return 0;
 		}
 #endif //#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
-#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-		if (arg2 == CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG) {
-			int error = 0;
-			if (!ksu_access_ok((void __user*)arg3, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE)) {
-				pr_err("susfs: CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG -> arg3 is not accessible\n");
-				return 0;
-			}
-			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
-				pr_err("susfs: CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG -> arg5 is not accessible\n");
-				return 0;
-			}
-			error = susfs_set_cmdline_or_bootconfig((char __user*)arg3);
-			pr_info("susfs: CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG -> ret: %d\n", error);
-			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
-				pr_info("susfs: copy_to_user() failed\n");
-			return 0;
-		}
-#endif //#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-		if (arg2 == CMD_SUSFS_ADD_OPEN_REDIRECT) {
-			int error = 0;
-			if (!ksu_access_ok((void __user*)arg3, sizeof(struct st_susfs_open_redirect))) {
-				pr_err("susfs: CMD_SUSFS_ADD_OPEN_REDIRECT -> arg3 is not accessible\n");
-				return 0;
-			}
-			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
-				pr_err("susfs: CMD_SUSFS_ADD_OPEN_REDIRECT -> arg5 is not accessible\n");
-				return 0;
-			}
-			error = susfs_add_open_redirect((struct st_susfs_open_redirect __user*)arg3);
-			pr_info("susfs: CMD_SUSFS_ADD_OPEN_REDIRECT -> ret: %d\n", error);
-			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
-				pr_info("susfs: copy_to_user() failed\n");
-			return 0;
-		}
-#endif //#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 		if (arg2 == CMD_SUSFS_SHOW_VERSION) {
 			int error = 0;
 			int len_of_susfs_version = strlen(SUSFS_VERSION);
@@ -681,41 +634,14 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 			enabled_features |= (1 << 1);
 #endif
-#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-			enabled_features |= (1 << 2);
-#endif
-#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-			enabled_features |= (1 << 3);
-#endif
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-			enabled_features |= (1 << 4);
-#endif
-#ifdef CONFIG_KSU_SUSFS_SUS_OVERLAYFS
-			enabled_features |= (1 << 5);
-#endif
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
 			enabled_features |= (1 << 6);
-#endif
-#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
-			enabled_features |= (1 << 7);
 #endif
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
 			enabled_features |= (1 << 8);
 #endif
 #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
 			enabled_features |= (1 << 9);
-#endif
-#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-			enabled_features |= (1 << 10);
-#endif
-#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-			enabled_features |= (1 << 11);
-#endif
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-			enabled_features |= (1 << 12);
-#endif
-#ifdef CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT
-			enabled_features |= (1 << 14);
 #endif
 			error = copy_to_user((void __user*)arg3, (void*)&enabled_features, sizeof(enabled_features));
 			pr_info("susfs: CMD_SUSFS_SHOW_ENABLED_FEATURES -> ret: %d\n", error);
@@ -797,23 +723,7 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 		}
 		return 0;
 	}
-	if (arg2 == CMD_ENABLE_SU) {
-		bool enabled = (arg3 != 0);
-		if (enabled == ksu_su_compat_enabled) {
-			pr_info("cmd enable su but no need to change.\n");
-			return 0;
-		}
-		if (enabled) {
-			ksu_sucompat_init();
-		} else {
-			ksu_sucompat_exit();
-		}
-		ksu_su_compat_enabled = enabled;
-		if (copy_to_user(result, &reply_ok, sizeof(reply_ok))) {
-			pr_err("prctl reply error, cmd: %lu\n", arg2);
-		}
-		return 0;
-	}
+
 	return 0;
 }
 
@@ -827,41 +737,33 @@ static bool is_appuid(kuid_t uid)
 	return appid >= FIRST_APPLICATION_UID && appid <= LAST_APPLICATION_UID;
 }
 
-static bool should_umount(struct path *path)
-{
-	if (!path) {
-		return false;
-	}
-
-	if (current->nsproxy->mnt_ns == init_nsproxy.mnt_ns) {
-		pr_info("ignore global mnt namespace process: %d\n",
-			current_uid().val);
-		return false;
-	}
-
-#ifdef CONFIG_KSU_SUSFS
-	return susfs_is_mnt_devname_ksu(path);
-#else
-	if (path->mnt && path->mnt->mnt_sb && path->mnt->mnt_sb->s_type) {
-		const char *fstype = path->mnt->mnt_sb->s_type->name;
-		return strcmp(fstype, "overlay") == 0;
-	}
-	return false;
-#endif
-}
-
-static void ksu_umount_mnt(struct path *path, int flags)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) || defined(KSU_HAS_PATH_UMOUNT)
+static void ksu_path_umount(const char *mnt, struct path *path, int flags)
 {
 	int err = path_umount(path, flags);
-	if (err) {
-		pr_info("umount %s failed: %d\n", path->dentry->d_iname, err);
-	}
+	pr_info("%s: path: %s code: %d\n", __func__, mnt, err);
 }
+#else
+static void ksu_sys_umount(const char *mnt, int flags)
+{
+	char __user *usermnt = (char __user *)mnt;
+
+	mm_segment_t old_fs = get_fs();
+	set_fs(KERNEL_DS);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
+	int ret = ksys_umount(usermnt, flags);
+#else
+	long ret = sys_umount(usermnt, flags); // cuz asmlinkage long sys##name
+#endif
+	set_fs(old_fs);
+	pr_info("%s: path: %s code: %d \n", __func__, mnt, ret);
+}
+#endif // KSU_HAS_PATH_UMOUNT
 
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
 void ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid)
 #else
-static void ksu_try_umount(const char *mnt, bool check_mnt, int flags)
+static void try_umount(const char *mnt, int flags)
 #endif
 {
 	struct path path;
@@ -872,49 +774,48 @@ static void ksu_try_umount(const char *mnt, bool check_mnt, int flags)
 
 	if (path.dentry != path.mnt->mnt_root) {
 		// it is not root mountpoint, maybe umounted by others already.
+		path_put(&path);
 		return;
 	}
 
-	// we are only interest in some specific mounts
-	if (check_mnt && !should_umount(&path)) {
-		return;
-	}
-
-#if defined(CONFIG_KSU_SUSFS_TRY_UMOUNT) && defined(CONFIG_KSU_SUSFS_ENABLE_LOG)
-	if (susfs_is_log_enabled) {
-		pr_info("susfs: umounting '%s' for uid: %d\n", mnt, uid);
-	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) || defined(KSU_HAS_PATH_UMOUNT)
+	ksu_path_umount(mnt, &path, flags);
+	// dont call path_put here!!
+	// path_umount releases ref for us
+#else
+	ksu_sys_umount(mnt, flags);
+	// release ref here! user_path_at increases it
+	// then only cleans for itself
+	path_put(&path);
 #endif
-
-	ksu_umount_mnt(&path, flags);
 }
+
+
+struct mount_entry {
+    char *umountable;
+    struct list_head list;
+};
+LIST_HEAD(mount_list);
 
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
 void susfs_try_umount_all(uid_t uid) {
 	susfs_try_umount(uid);
-	/* For Legacy KSU only */
-	ksu_try_umount("/system", true, 0, uid);
-	ksu_try_umount("/system_ext", true, 0, uid);
-	ksu_try_umount("/vendor", true, 0, uid);
-	ksu_try_umount("/product", true, 0, uid);
-	ksu_try_umount("/odm", true, 0, uid);
-	// - For '/data/adb/modules' we pass 'false' here because it is a loop device that we can't determine whether 
-	//   its dev_name is KSU or not, and it is safe to just umount it if it is really a mountpoint
-	ksu_try_umount("/data/adb/modules", false, MNT_DETACH, uid);
-	/* For both Legacy KSU and Magic Mount KSU */
-	ksu_try_umount("/debug_ramdisk", true, MNT_DETACH, uid);
-	ksu_try_umount("/system/etc/hosts", false, MNT_DETACH, uid);
-	ksu_try_umount("/apex/com.android.art/bin/dex2oat64", false, MNT_DETACH, uid);
-	ksu_try_umount("/apex/com.android.art/bin/dex2oat32", false, MNT_DETACH, uid);
+
 }
 #endif
 
-int ksu_handle_setuid(struct cred *new, const struct cred *old)
+LSM_HANDLER_TYPE ksu_handle_setuid(struct cred *new, const struct cred *old)
 {
+	struct mount_entry *entry, *tmp;
+
 	// this hook is used for umounting overlayfs for some uid, if there isn't any module mounted, just ignore it!
 	if (!ksu_module_mounted) {
 		return 0;
 	}
+	
+	// we dont need to unmount if theres no unmountable
+	if (!ksu_unmountable_count)
+		return 0;
 
 	if (!new || !old) {
 		return 0;
@@ -981,47 +882,215 @@ out_ksu_try_umount:
 			current->pid);
 		return 0;
 	}
-#ifdef CONFIG_KSU_DEBUG
+
 	// umount the target mnt
 	pr_info("handle umount for uid: %d, pid: %d\n", new_uid.val,
 		current->pid);
-#endif
 
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
 	// susfs come first, and lastly umount by ksu, make sure umount in reversed order
 	susfs_try_umount_all(new_uid.val);
-#else
-	// fixme: use `collect_mounts` and `iterate_mount` to iterate all mountpoint and
-	// filter the mountpoint whose target is `/data/adb`
-	ksu_try_umount("/system", true, 0);
-	ksu_try_umount("/vendor", true, 0);
-	ksu_try_umount("/product", true, 0);
-	ksu_try_umount("/system_ext", true, 0);
-	ksu_try_umount("/data/adb/modules", false, MNT_DETACH);
-
-	// try umount ksu temp path
-	ksu_try_umount("/debug_ramdisk", false, MNT_DETACH);
-
-	// try umount /system/etc/hosts (hosts module)
-	ksu_try_umount("/system/etc/hosts", false, MNT_DETACH);
-	
-	// try umount lsposed dex2oat
-	ksu_try_umount("/apex/com.android.art/bin/dex2oat64", false, MNT_DETACH);
-	ksu_try_umount("/apex/com.android.art/bin/dex2oat32", false, MNT_DETACH);
-	
 #endif
+
+	list_for_each_entry_safe(entry, tmp, &mount_list, list) {
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+		ksu_try_umount(entry->umountable, NULL, MNT_DETACH, new_uid.val);
+#else
+		try_umount(entry->umountable, MNT_DETACH);
+#endif
+		// don't free! keep on heap! this is used on subsequent setuid calls
+		// if this is freed, we dont have anything to umount next
+		// FIXME: might leak, refresh the list?
+	}
+
 	return 0;
 }
 
-static int ksu_task_prctl(int option, unsigned long arg2, unsigned long arg3,
-			  unsigned long arg4, unsigned long arg5)
+static int ksu_mount_monitor(const char *dev_name, const char *dirname, const char *type)
 {
-	ksu_handle_prctl(option, arg2, arg3, arg4, arg5);
-	return -ENOSYS;
+
+	char *device_name_copy = kstrdup(dev_name, GFP_KERNEL);
+	char *fstype_copy = kstrdup(type, GFP_KERNEL);
+	char *dirname_copy = kstrdup(dirname, GFP_KERNEL);
+	const char *string_fstype = fstype_copy ? fstype_copy : "(null)";
+	const char *string_devname = device_name_copy ? device_name_copy : "(null)";
+	struct mount_entry *new_entry;
+
+	if (unlikely(!dirname_copy)) // if dirname is null thats just questionable
+		goto out;
+	
+	/*
+	 * feel free to add your own patterns
+	 * default one is just KSU devname or it starts with /data/adb/modules
+	 *
+	 * for devicenamme and fstype string comparisons, make sure to use string_fstype/string_devname as NULL is being allowed.
+	 * using device_name_copy, fstype_copy can lead to null pointer dereference.
+	 */
+	if ((!strcmp(string_devname, "KSU")) 
+	//	|| !strcmp(dirname_copy, "/system/etc/hosts") // this is an example
+		|| strstarts(dirname_copy, "/data/adb/modules") ) {
+		new_entry = kmalloc(sizeof(*new_entry), GFP_KERNEL);
+		if (new_entry) {
+			new_entry->umountable = kstrdup(dirname, GFP_KERNEL);
+			list_add(&new_entry->list, &mount_list);
+			ksu_unmountable_count++;
+			pr_info("%s: devicename: %s fstype: %s path: %s count: %d\n", __func__, string_devname, string_fstype, new_entry->umountable, ksu_unmountable_count);
+		}
+	}
+out:
+	kfree(device_name_copy);
+	kfree(fstype_copy);
+	kfree(dirname_copy);
+	return 0;
 }
-// kernel 4.4 and 4.9
+
+// for UL, hook on security.c ksu_sb_mount(dev_name, path, type, flags, data);
+LSM_HANDLER_TYPE ksu_sb_mount(const char *dev_name, const struct path *path,
+                        const char *type, unsigned long flags, void *data)
+{
+	/* 
+	 * 384 is what throne_tracker uses, something sensible even for /data/app
+	 * we can pattern match revanced mounts even.
+	 * we are not really interested on mountpoints that are longer than that
+	 * this is now up to the modder for tweaking
+	 */
+	char buf[384];
+	char *dir_name = d_path(path, buf, sizeof(buf));
+
+	if (dir_name && dir_name != buf) {
+#ifdef CONFIG_KSU_DEBUG
+		pr_info("security_sb_mount: devname: %s path: %s type: %s \n", dev_name, dir_name, type);
+#endif
+		return ksu_mount_monitor(dev_name, dir_name, type);
+	} else {
+		return 0;
+	}
+}
+
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+__attribute__((hot))
+static __always_inline int check_sus_inode(struct inode *inode, uid_t uid)
+{
+	if (!inode->i_state)
+		return 0;
+	
+	if (unlikely(inode->i_state & INODE_STATE_SUS_PATH)
+		&& likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) ) {
+#ifdef CONFIG_KSU_DEBUG		
+		pr_info("%s: blocked inode access: %s with uid %u\n", __func__, current->comm, uid);
+#endif
+		return -ENOENT;
+	}
+
+	return 0;
+}
+#endif // CONFIG_KSU_SUSFS_SUS_PATH
+
+#ifndef DEVPTS_SUPER_MAGIC
+#define DEVPTS_SUPER_MAGIC	0x1cd1
+#endif
+
+extern int __ksu_handle_devpts(struct inode *inode); // sucompat.c
+
+LSM_HANDLER_TYPE ksu_inode_permission(struct inode *inode, int mask)
+{
+	if (inode && inode->i_sb 
+		&& unlikely(inode->i_sb->s_magic == DEVPTS_SUPER_MAGIC)) {
+		//pr_info("%s: handling devpts for: %s \n", __func__, current->comm);
+		__ksu_handle_devpts(inode);
+	}
+
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (!boot_complete_lock)
+		return 0;
+
+	uid_t uid = __kuid_val(current->cred->uid);
+	if (!ksu_uid_should_umount(uid) || (uid % 100000) < 10000 )
+		return 0;
+
+	return check_sus_inode(inode, uid);
+#else
+	return 0;
+#endif
+}
+
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
+LSM_HANDLER_TYPE ksu_file_open(struct file *file)
+#else
+LSM_HANDLER_TYPE ksu_file_open(struct file *file, const struct cred *cred)
+#endif
+{
+	
+	if (!boot_complete_lock)
+		return 0;
+
+	uid_t uid = __kuid_val(current->cred->uid);
+	if (!ksu_uid_should_umount(uid) || (uid % 100000) < 10000 )
+		return 0;
+
+	return check_sus_inode(file->f_inode, uid);
+}
+
+LSM_HANDLER_TYPE ksu_file_stat(const struct path *path)
+{
+	if (!boot_complete_lock)
+		return 0;
+
+	uid_t uid = __kuid_val(current->cred->uid);
+	if (!ksu_uid_should_umount(uid) || (uid % 100000) < 10000 )
+		return 0;
+
+	struct inode *inode = d_backing_inode(path->dentry);
+	if (!inode)
+		return 0;
+
+	return check_sus_inode(inode, uid);
+}
+#endif // CONFIG_KSU_SUSFS_SUS_PATH
+
+#ifdef CONFIG_COMPAT
+bool ksu_is_compat __read_mostly = false;
+#endif
+
+LSM_HANDLER_TYPE ksu_bprm_check(struct linux_binprm *bprm)
+{
+	char *filename = (char *)bprm->filename;
+	
+	if (likely(!ksu_execveat_hook))
+		return 0;
+
+/*
+ * 32-on-64 compat detection 
+ *
+ * notes:
+ * bprm->buf provides the binary itself !!
+ * https://unix.stackexchange.com/questions/106234/determine-if-a-specific-process-is-32-or-64-bit
+ * buf[0] == 0x7f && buf[1] == 'E' &&  buf[2] == 'L' && buf[3] == 'F' 
+ * so as that said, we check ELF header, then we check 5th byte, 0x01 = 32-bit, 0x02 = 64 bit
+ * we only check first execution of /data/adb/ksud and while ksu_execveat_hook is open!
+ * 
+ */
+#ifdef CONFIG_COMPAT
+	static bool compat_check_done __read_mostly = false;
+	if ( unlikely(!compat_check_done) && unlikely(!strcmp(filename, "/data/adb/ksud"))
+		&& !memcmp(bprm->buf, "\x7f\x45\x4c\x46", 4) ) {
+		if (bprm->buf[4] == 0x01 )
+			ksu_is_compat = true;
+
+		pr_info("%s: %s ELF magic found! ksu_is_compat: %d \n", __func__, filename, ksu_is_compat);
+		compat_check_done = true;
+	}
+#endif
+
+	ksu_handle_pre_ksud(filename);
+
+	return 0;
+}
+
+// kernel 4.9 and older
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) || defined(CONFIG_KSU_ALLOWLIST_WORKAROUND)
-static int ksu_key_permission(key_ref_t key_ref, const struct cred *cred,
+LSM_HANDLER_TYPE ksu_key_permission(key_ref_t key_ref, const struct cred *cred,
 			      unsigned perm)
 {
 	if (init_session_keyring != NULL) {
@@ -1036,6 +1105,15 @@ static int ksu_key_permission(key_ref_t key_ref, const struct cred *cred,
 	return 0;
 }
 #endif
+
+#ifdef CONFIG_KSU_LSM_SECURITY_HOOKS
+static int ksu_task_prctl(int option, unsigned long arg2, unsigned long arg3,
+			  unsigned long arg4, unsigned long arg5)
+{
+	ksu_handle_prctl(option, arg2, arg3, arg4, arg5);
+	return -ENOSYS;
+}
+
 static int ksu_inode_rename(struct inode *old_inode, struct dentry *old_dentry,
 			    struct inode *new_inode, struct dentry *new_dentry)
 {
@@ -1049,9 +1127,16 @@ static int ksu_task_fix_setuid(struct cred *new, const struct cred *old,
 }
 
 static struct security_hook_list ksu_hooks[] = {
+	LSM_HOOK_INIT(bprm_check_security, ksu_bprm_check),
 	LSM_HOOK_INIT(task_prctl, ksu_task_prctl),
 	LSM_HOOK_INIT(inode_rename, ksu_inode_rename),
 	LSM_HOOK_INIT(task_fix_setuid, ksu_task_fix_setuid),
+	LSM_HOOK_INIT(sb_mount, ksu_sb_mount),
+	LSM_HOOK_INIT(inode_permission, ksu_inode_permission),
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	LSM_HOOK_INIT(file_open, ksu_file_open),
+	LSM_HOOK_INIT(inode_getattr, ksu_file_stat),
+#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) || defined(CONFIG_KSU_ALLOWLIST_WORKAROUND)
 	LSM_HOOK_INIT(key_permission, ksu_key_permission)
 #endif
@@ -1071,3 +1156,9 @@ void __init ksu_core_init(void)
 {
 	ksu_lsm_hook_init();
 }
+#else
+void __init ksu_core_init(void)
+{
+	pr_info("ksu_core_init: LSM hooks not in use.\n");
+}
+#endif //CONFIG_KSU_LSM_SECURITY_HOOKS
