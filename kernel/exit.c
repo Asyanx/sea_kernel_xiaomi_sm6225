@@ -826,7 +826,7 @@ static inline void check_stack_usage(void) {}
 #endif
 
 void dead_special_task(void);
-void __noreturn do_exit(long code)
+void do_exit(long code)
 {
 	struct task_struct *tsk = current;
 	int group_dead;
