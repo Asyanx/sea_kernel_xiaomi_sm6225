@@ -77,6 +77,11 @@ $(info -- KernelSU/compat: backported cpus_ptr found!)
 CFLAGS_ksu.o += -DKSU_COMPAT_HAS_BACKPORTED_CPUS_PTR
 endif
 
+# branch link hook, do_faccessat
+ifeq ($(shell grep "long do_faccessat" $(srctree)/fs/open.c 2>/dev/null | grep -q "flags" 2>/dev/null; echo $$?),0)
+CFLAGS_ksu.o += -DKSU_HAS_FACCESSAT2
+endif
+
 # UL, look for read_iter on f_op struct
 ifeq ($(shell grep -q "read_iter" $(srctree)/include/linux/fs.h 2>/dev/null; echo $$?),0)
 $(info -- KernelSU/compat: f_op->read_iter found!)

@@ -2,8 +2,8 @@
 #error "automated LSM hooking on 6.8+ is only for ARM64!"
 #endif
 
-#if !defined(CONFIG_KALLSYMS)
-#error "automated LSM hooking on 6.8+ requires kallsyms!"
+#if !defined(CONFIG_KPROBES)
+#error "automated LSM hooking on 6.8+ requires kprobes!"
 #endif
 
 // security.c hijack for 6.8+
@@ -43,19 +43,8 @@ main:
 // so we can do this like on x86 where 74 xx to 74 yy
 // bl is call+ret equivalent on x86 though
 
-# if 0
-extern int security_inode_rename(struct inode *old_dir, struct dentry *old_dentry, struct inode *new_dir, struct dentry *new_dentry, unsigned int flags);
-__attribute__((hot))
-static __nocfi int ksu_inode_rename(struct inode *old_dir, struct dentry *old_dentry, struct inode *new_dir, struct dentry *new_dentry, unsigned int flags)
-{
-	ksu_rename_observer(old_dentry, new_dentry);
-	return security_inode_rename(old_dir, old_dentry, new_dir, new_dentry, flags);
-}
-#endif
-
 // this is EXPORT_SYMBOL, this is stabler.
 extern int vfs_rename(struct renamedata *rd);
-__attribute__((hot))
 static __nocfi int ksu_vfs_rename(struct renamedata *rd)
 {
 	int ret = vfs_rename(rd);
@@ -65,9 +54,15 @@ static __nocfi int ksu_vfs_rename(struct renamedata *rd)
 	return ret;
 }
 
+extern int security_inode_rename(struct inode *old_dir, struct dentry *old_dentry, struct inode *new_dir, struct dentry *new_dentry, unsigned int flags);
+static __nocfi int ksu_inode_rename(struct inode *old_dir, struct dentry *old_dentry, struct inode *new_dir, struct dentry *new_dentry, unsigned int flags)
+{
+	ksu_rename_observer(old_dentry, new_dentry);
+	return security_inode_rename(old_dir, old_dentry, new_dir, new_dentry, flags);
+}
+
 // setuid
 extern int security_task_fix_setuid(struct cred *new, const struct cred *old, int flags);
-__attribute__((hot))
 static __nocfi int ksu_task_fix_setuid(struct cred *new, const struct cred *old, int flags)
 {
 	// see sys_setresuid
@@ -79,7 +74,6 @@ static __nocfi int ksu_task_fix_setuid(struct cred *new, const struct cred *old,
 
 // bprm
 extern int security_bprm_check(struct linux_binprm *bprm);
-__attribute__((hot))
 static __nocfi int ksu_bprm_check(struct linux_binprm *bprm)
 {
 #ifdef CONFIG_KSU_FEATURE_SULOG
@@ -90,7 +84,6 @@ static __nocfi int ksu_bprm_check(struct linux_binprm *bprm)
 
 // vfs_read, as security_file_permission is a bit spotty to hook!
 extern ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos);
-__attribute__((hot))
 static __nocfi ssize_t ksu_vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
 #if !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)
@@ -108,7 +101,6 @@ static __nocfi ssize_t ksu_vfs_read(struct file *file, char __user *buf, size_t 
 
 // setprocattr
 extern int security_setprocattr(int lsmid, const char *name, void *value, size_t size);
-__attribute__((hot))
 static __nocfi int ksu_setprocattr(int lsmid, const char *name, void *value, size_t size)
 {
 	ksu_hide_setprocattr_inline(name, value, size);
@@ -121,59 +113,42 @@ static void __init ksu_core_init(void)
 	uintptr_t target_callsite;
 	uintptr_t symbol_addr;
 
-#if 0
-	// rename
-	extern int vfs_rename(struct renamedata *rd);
-	target_callsite = (uintptr_t)&vfs_rename;
-	symbol_addr = (uintptr_t)&security_inode_rename;
-
-	ret = arm64_bl_patch(target_callsite, 256 * sizeof(void *), symbol_addr, (uintptr_t)&ksu_inode_rename);
-	pr_info("lsm_hijack: security_inode_rename: ret %d \n", ret);
-	symbol_addr = NULL;
-#endif
-	// rename
-	extern int do_renameat2(int olddfd, struct filename *from, int newdfd, struct filename *to, unsigned int flags);
-	target_callsite = (uintptr_t)&do_renameat2;
-	symbol_addr = (uintptr_t)&vfs_rename;
-
+// rename
+	target_callsite = kp_cfi_kallsyms_lookup_name("do_renameat2");
+	symbol_addr = kp_cfi_kallsyms_lookup_name("vfs_rename");
 	ret = arm64_bl_patch(target_callsite, 256 * sizeof(void *), symbol_addr, (uintptr_t)&ksu_vfs_rename);
 	pr_info("lsm_hijack: vfs_rename: ret %d \n", ret);
-	symbol_addr = NULL;
+	if (ret) {
+		target_callsite = kp_cfi_kallsyms_lookup_name("vfs_rename");
+		symbol_addr = kp_cfi_kallsyms_lookup_name("security_inode_rename");
+		ret = arm64_bl_patch(target_callsite, 256 * sizeof(void *), symbol_addr, (uintptr_t)&ksu_inode_rename);
+		pr_info("lsm_hijack: security_inode_rename: ret %d \n", ret);
+	}
 
-	// setuid
-	extern long __sys_setresuid(uid_t ruid, uid_t euid, uid_t suid);
-	target_callsite = (uintptr_t)&__sys_setresuid;
-	symbol_addr = (uintptr_t)&security_task_fix_setuid;
+// setuid
 
+	target_callsite = kp_cfi_kallsyms_lookup_name("__sys_setresuid");
+	symbol_addr = kp_cfi_kallsyms_lookup_name("security_task_fix_setuid");
 	ret = arm64_bl_patch(target_callsite, 128 * sizeof(void *), symbol_addr, (uintptr_t)&ksu_task_fix_setuid);
 	pr_info("lsm_hijack: security_task_fix_setuid: ret %d \n", ret);
-	symbol_addr = NULL;
 
 #ifdef CONFIG_KSU_FEATURE_SULOG
-	// bprm, TODO: refine
-	target_callsite = (uintptr_t)kallsyms_lookup_name("bprm_execve");
-	symbol_addr = (uintptr_t)&security_bprm_check;
-	
+	target_callsite = kp_cfi_kallsyms_lookup_name("bprm_execve");
+	symbol_addr = kp_cfi_kallsyms_lookup_name("security_bprm_check");
 	ret = arm64_bl_patch(target_callsite, 256 * sizeof(void *), symbol_addr, (uintptr_t)&ksu_bprm_check);
 	pr_info("lsm_hijack: security_bprm_check: ret %d \n", ret);
-	symbol_addr = NULL;
 #endif
 
-	// read
-	extern ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count);
-	target_callsite = (uintptr_t)&ksys_read;
-	symbol_addr = (uintptr_t)&vfs_read;
-
+#if !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)
+	target_callsite = kp_cfi_kallsyms_lookup_name("ksys_read");
+	symbol_addr = kp_cfi_kallsyms_lookup_name("vfs_read");
 	ret = arm64_bl_patch(target_callsite, 64 * sizeof(void *), symbol_addr, (uintptr_t)&ksu_vfs_read);
 	pr_info("lsm_hijack: ksys_read: ret %d \n", ret);
-	symbol_addr = NULL;
+#endif
 
-	// TODO: traverse proc_pid_attr_operations
-	target_callsite = (uintptr_t)kallsyms_lookup_name("proc_pid_attr_write");
-	symbol_addr = (uintptr_t)&security_setprocattr;
-
+	target_callsite = kp_cfi_kallsyms_lookup_name("proc_pid_attr_write");
+	symbol_addr = kp_cfi_kallsyms_lookup_name("security_setprocattr");
 	ret = arm64_bl_patch(target_callsite, 64 * sizeof(void *), symbol_addr, (uintptr_t)&ksu_setprocattr);
 	pr_info("lsm_hijack: security_setprocattr: ret %d \n", ret);
-	symbol_addr = NULL;
 
 }

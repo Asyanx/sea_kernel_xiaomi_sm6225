@@ -100,6 +100,7 @@ static noinline long hook_aarch64_read(const struct pt_regs *regs)
 }
 
 #ifdef CONFIG_COMPAT
+extern long __arm64_sys_reboot(const struct pt_regs *regs);
 static syscall_fn_t armeabi_reboot __read_mostly = NULL;
 static noinline long hook_armeabi_reboot(const struct pt_regs *regs)
 {
@@ -109,7 +110,7 @@ static noinline long hook_armeabi_reboot(const struct pt_regs *regs)
 	void __user **arg = (void __user **)&regs->regs[3];
 
 	ksu_handle_sys_reboot(magic1, magic2, cmd, arg);
-	return armeabi_reboot(regs);
+	return __arm64_sys_reboot(regs);
 }
 
 extern long __arm64_compat_sys_execve(const struct pt_regs *regs);
@@ -124,24 +125,27 @@ static noinline long hook_armeabi_execve(const struct pt_regs *regs)
 	return __arm64_compat_sys_execve(regs);
 }
 
+extern long __arm64_sys_faccessat(const struct pt_regs *regs);
 static syscall_fn_t armeabi_faccessat __read_mostly = NULL;
 static noinline long hook_armeabi_faccessat(const struct pt_regs *regs)
 {
 	const char __user **filename = (const char __user **)&regs->regs[1];
 
 	ksu_handle_faccessat(NULL, filename, NULL, NULL);
-	return armeabi_faccessat(regs);
+	return __arm64_sys_faccessat(regs);
 }
 
+extern long __arm64_sys_fstatat64(const struct pt_regs *regs);
 static syscall_fn_t armeabi_fstatat64 __read_mostly = NULL;
 static noinline long hook_armeabi_fstatat64(const struct pt_regs *regs)
 {
 	const char __user **filename = (const char __user **)&regs->regs[1];
 
 	ksu_handle_stat(NULL, filename, NULL);
-	return armeabi_fstatat64(regs);
+	return __arm64_sys_fstatat64(regs);
 }
 
+extern long __arm64_sys_fstat64(const struct pt_regs *regs);
 static syscall_fn_t armeabi_fstat64 __read_mostly = NULL;
 static noinline long hook_armeabi_fstat64_ret(const struct pt_regs *regs)
 {
@@ -149,29 +153,24 @@ static noinline long hook_armeabi_fstat64_ret(const struct pt_regs *regs)
 	unsigned long *fd = (unsigned long *)&regs->regs[0];
 	struct stat64 __user **statbuf = (struct stat64 __user **)&regs->regs[1];
 
-	long ret = armeabi_fstat64(regs);
+	long ret = __arm64_sys_fstat64(regs);
 	ksu_handle_fstat64_ret(fd, statbuf);
 	return ret;
 }
 
+extern long __arm64_sys_read(const struct pt_regs *regs);
 static syscall_fn_t armeabi_read __read_mostly = NULL;
 static noinline long hook_armeabi_read(const struct pt_regs *regs)
 {
 	unsigned int fd = (unsigned int)regs->regs[0];	
 
 	ksu_handle_sys_read_fd(fd);
-	return armeabi_read(regs);
+	return __arm64_sys_read(regs);
 }
 
 #endif // CONFIG_COMPAT
 
 #else // END OF 4.19+ SYSCALL HANDLERS
-
-/**
- *  for legacy syscall abi, we straight up call the syscall symbol
- *  this is easier and maybe a little bit faster
- *
- */
 
 static uintptr_t aarch64_reboot __read_mostly = NULL;
 static noinline long hook_aarch64_reboot(int magic1, int magic2, unsigned int cmd, void __user *arg)
@@ -419,7 +418,7 @@ out:
 	smp_mb(); 
 }
 
-static int ksu_syscall_table_restore()
+static int ksu_syscall_table_restore(void *data)
 {
 	set_user_nice(current, 19); // low prio
 

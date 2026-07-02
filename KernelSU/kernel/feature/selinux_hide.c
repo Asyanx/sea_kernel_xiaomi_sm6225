@@ -196,34 +196,6 @@ static int slow_avc_audit_pre_handler(struct kprobe *p, struct pt_regs *regs)
 	return 0;
 }
 
-// copied from upstream
-static struct kprobe *init_kprobe(const char *name, kprobe_pre_handler_t handler)
-{
-	struct kprobe *kp = kzalloc(sizeof(struct kprobe), GFP_KERNEL);
-	if (!kp)
-		return NULL;
-	kp->symbol_name = name;
-	kp->pre_handler = handler;
-
-	int ret = register_kprobe(kp);
-	pr_info("%s: register %s kprobe: %d\n", __func__, name, ret);
-	if (ret) {
-		kfree(kp);
-		return NULL;
-	}
-
-	return kp;
-}
-static void destroy_kprobe(struct kprobe **kp_ptr)
-{
-	struct kprobe *kp = *kp_ptr;
-	if (!kp)
-		return;
-	unregister_kprobe(kp);
-	synchronize_rcu();
-	kfree(kp);
-	*kp_ptr = NULL;
-}
 #endif // CONFIG_KPROBES
 
 
@@ -352,8 +324,6 @@ orig_page:
 	return sel_open_handle_status_fn(inode, filp);
 }
 
-#define FORCE_VOLATILE(x) *(volatile typeof(x) *)&(x)
-
 static void ksu_init_hook_selinux_transaction_write()
 {
 	struct path path;
@@ -399,9 +369,9 @@ static void ksu_init_hook_selinux_transaction_write()
 				
 	preempt_disable();
 	local_irq_disable();
-					
-	FORCE_VOLATILE(*target_slot) = (void *)ksu_selinux_transaction_write;
-					
+
+	WRITE_ONCE(*target_slot, ksu_selinux_transaction_write);
+
 	local_irq_enable();
 	preempt_enable();
 
@@ -460,8 +430,8 @@ static void ksu_init_hook_selinux_status_open()
 				
 	preempt_disable();
 	local_irq_disable();
-					
-	FORCE_VOLATILE(*target_slot) = (void *)ksu_sel_open_handle_status;
+
+	WRITE_ONCE(*target_slot, ksu_sel_open_handle_status);
 					
 	local_irq_enable();
 	preempt_enable();
