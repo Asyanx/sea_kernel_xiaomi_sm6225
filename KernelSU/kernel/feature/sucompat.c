@@ -182,6 +182,9 @@ static __always_inline void ksu_sucompat_user_common(const char __user **filenam
 	uintptr_t *su_p = (uintptr_t *)su;
 	uintptr_t __user *fn_p = (uintptr_t __user *)untagged_addr(*(char **)filename_user);
 
+	// cheaper than prefaulting (fault_in_readable, fault_in_pages_readable)
+	__builtin_prefetch(fn_p);
+
 	// assert /system/bin/su\0 = 15 bytes.
 	BUILD_BUG_ON(sizeof(SU_PATH) + 1 != 16);
 

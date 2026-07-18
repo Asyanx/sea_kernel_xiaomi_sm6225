@@ -2,12 +2,12 @@
 
 ## hooking
 - prefer syscalls and LSM always
-- syscall table hooking is implemented but only for !CFI
+- syscall table hooking is implemented
 - on legacy theres no kprobes/kretprobes and syscall tracepoint guarantees
 - theres no guarantee for kallsyms even!
 - lots have random backports left and right, theres no abi stability guarantee at all!
 - theres partial kp/rp support on boot-time hooks
-- theres also experimental ARM64 bl insn inline hooking support. Verified on 6.12 GKI.
+- theres also experimental ARM64 bl insn inline hooking support. Recommended for GKI.
 
 ## sucompat
 - tweaked for downstream
@@ -67,8 +67,7 @@
 - if easy, backport newer kernel fn/macro's as is, then redefine.
 - if hard, mimic what it does then redefine. as long as it works it is good enough.
 - lots of casting hacks / type punning / void* / void** abuse are used
-- kernel_compat.h for small functions
-- kernel_compat.c for big functions marked __weak and tagged with extern on callee site
+- kernel_compat.h holds most compat handling / hacks
 
 ## kthreads
 - theres a lot of these on the codebase even for mundane tasks

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (C) 2026 \xx
+
 #ifndef __KSU_H_KPROBES_COMMON
 #define __KSU_H_KPROBES_COMMON
 
@@ -35,17 +38,15 @@ static uintptr_t kp_cfi_kallsyms_lookup_name(const char *name)
 	if (!addr)
 		goto cfi_jt;
 	
-	pr_info("kallsyms_lookup: %s addr: 0x%lx \n", name, addr);
+	pr_info("kp_kallsyms_lookup_name: %s addr: 0x%lx \n", name, addr);
 	return addr;
 
 cfi_jt:
-	// this might not work as CFI jump tables are just direct b, we just _/\_
-	// that target bl is somewhere below it. looking user's vmlinux's might be 
-	// needed if a lot of users actually fallback to this.
+	// decode the b 0xfffffffff address on here if this happens, TODO.
 	snprintf(cfi_name, sizeof(cfi_name), "%s.cfi_jt", name);
-	addr = kp_kallsyms_lookup_name(cfi_name);
-	pr_info("kallsyms_lookup: %s addr: 0x%lx \n", cfi_name, addr);
-	
+	addr = kallsyms_lookup_name(cfi_name);
+	pr_info("kallsyms_lookup_name: %s addr: 0x%lx \n", cfi_name, addr);
+
 	return addr;
 }
 

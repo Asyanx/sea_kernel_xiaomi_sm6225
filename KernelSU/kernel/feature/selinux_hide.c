@@ -1,3 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2026 \xx
+ *
+ * This file is a downstream extension and NOT affiliated, endorsed by,
+ * or maintained by the official KernelSU developers.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ */
+
 /**
  *  NOTE: this isnt the fullblown thing like upstream's where we straight up backport
  *  SELinux. This is just questionable to do when we want to support a plethora of
