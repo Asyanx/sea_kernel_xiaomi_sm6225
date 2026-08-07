@@ -475,11 +475,8 @@ static void syscall_table_sucompat_disable()
 	mutex_unlock(&sucompat_toggle_mutex);
 }
 
-static __init int ksu_syscall_table_hook_init()
+static void syscall_table_ksud_hook_init()
 {
-	// enable on init!
-	syscall_table_sucompat_enable();
-
 	read_and_replace_syscall((void *)&aarch64_reboot, __AARCH64_reboot, (void *)hook_aarch64_reboot, (void *)sys_call_table);
 	read_and_replace_syscall((void *)&aarch64_newfstat, __AARCH64_newfstat, (void *)hook_aarch64_newfstat_ret, (void *)sys_call_table);
 	read_and_replace_syscall((void *)&aarch64_read, __AARCH64_read, (void *)hook_aarch64_read, (void *)sys_call_table);
@@ -492,6 +489,14 @@ static __init int ksu_syscall_table_hook_init()
 
 	// start unreg kthread
 	kthread_run(ksu_syscall_table_restore, NULL, "unhook");
+}
+
+static __init int ksu_syscall_table_hook_init()
+{
+	// enable on init!
+	syscall_table_sucompat_enable();
+	syscall_table_ksud_hook_init();
+
 	return 0;
 }
 

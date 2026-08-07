@@ -186,7 +186,7 @@ rename_hook_done:
 	pr_info("lsm_hijack: security_bprm_check: ret %d \n", ret);
 #endif
 
-#if !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)
+#if !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE) && !defined(CONFIG_KSU_HACK_ARM64_BRANCH_LINK)
 	symbol_addr = ksu_kallsyms_lookup_name("vfs_read");
 	ret = arm64_bl_patch(ksu_kallsyms_lookup_name("ksys_read"), 64 * sizeof(void *), symbol_addr, (uintptr_t)&ksu_vfs_read);
 	if (ret)

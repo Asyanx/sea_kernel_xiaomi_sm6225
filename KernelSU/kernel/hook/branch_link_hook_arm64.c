@@ -87,7 +87,8 @@ KEEP_SYMBOL int ksu_vfs_statx(int dfd, struct filename *filename, int flags, str
 
 	if (unlikely(fn_p[0] != su_p[0]))
 		goto orig_fn;
-	
+
+	write_sulog('s');
 	pr_info("vfs_statx su->sh\n");
 	__builtin_memcpy(filename_ptr, SH_PATH, sizeof(SH_PATH));
 
@@ -500,19 +501,8 @@ static int bl_hack_init_thread(void *data)
 
 static int ksu_branch_link_patch_init()
 {
-
-#ifndef CONFIG_KSU_KPROBES_KSUD
-	read_and_replace_syscall((void *)&aarch64_reboot, __AARCH64_reboot, (void *)hook_aarch64_reboot, (void *)sys_call_table);
-	read_and_replace_syscall((void *)&aarch64_newfstat, __AARCH64_newfstat, (void *)hook_aarch64_newfstat_ret, (void *)sys_call_table);
-#if defined(CONFIG_COMPAT)
-	read_and_replace_syscall((void *)&armeabi_reboot, __ARMEABI_reboot, (void *)hook_armeabi_reboot, (void *)compat_sys_call_table);
-	read_and_replace_syscall((void *)&armeabi_fstat64, __ARMEABI_fstat64, (void *)hook_armeabi_fstat64_ret, (void *)compat_sys_call_table);
-#endif // COMPAT
-
-	kthread_run(ksu_syscall_table_restore, NULL, "unhook");
-#endif
-
 	// enable sct first, if branch link succeeds, it will be restored
+	syscall_table_ksud_hook_init();
 	syscall_table_sucompat_enable();
 
 	/**
