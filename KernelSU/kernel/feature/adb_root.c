@@ -2,7 +2,7 @@
 
 static bool ksu_adb_root __read_mostly = false;
 
-static long is_exec_adbd(const char __user **filename_user)
+static inline long is_exec_adbd(const char __user **filename_user)
 {
 	// should be bigger than `/apex/com.android.adbd/bin/adbd`
 	char buf[40] = { 0 };
@@ -155,7 +155,7 @@ out_release_env_p:
 	return ret;
 }
 
-static noinline void do_ksu_adb_root_handle_execve(void *restrict filename, void *restrict envp_in)
+static noinline void do_ksu_adb_root_execve_user(void *restrict filename, void *restrict envp_in)
 {
 	if (likely(ksu_is_seccomp_enabled()))
 		return;
@@ -182,7 +182,7 @@ static noinline void do_ksu_adb_root_handle_execve(void *restrict filename, void
 	return;
 }
 
-static noinline void do_ksu_adb_root_handle_execveat(void *restrict filename, void *restrict envp_in)
+static noinline void do_ksu_adb_root_execve_kernel(void *restrict filename, void *restrict envp_in)
 {
 	if (likely(ksu_is_seccomp_enabled()))
 		return;
@@ -230,29 +230,29 @@ static noinline void do_ksu_adb_root_handle_execveat(void *restrict filename, vo
 
 DEFINE_STATIC_KEY_FALSE(ksu_adb_root_key);
 
-static inline void ksu_adb_root_handle_execve(void *restrict filename, void *restrict envp_in)
+static inline void ksu_adb_root_execve_user(void *restrict filename, void *restrict envp_in)
 {
 	if (static_branch_unlikely(&ksu_adb_root_key))
-		do_ksu_adb_root_handle_execve(filename, envp_in);
+		do_ksu_adb_root_execve_user(filename, envp_in);
 }
-static inline void ksu_adb_root_handle_execveat(void *restrict filename, void *restrict envp_in)
+static inline void ksu_adb_root_execve_kernel(void *restrict filename, void *restrict envp_in)
 {
 	if (static_branch_unlikely(&ksu_adb_root_key))
-		do_ksu_adb_root_handle_execveat(filename, envp_in);
+		do_ksu_adb_root_execve_kernel(filename, envp_in);
 }
 
 static inline void ksu_static_branch_enable() { static_branch_enable(&ksu_adb_root_key); smp_mb(); }
 static inline void ksu_static_branch_disable() { static_branch_disable(&ksu_adb_root_key); smp_mb(); }
 #else /* ! KSU_CAN_USE_JUMP_LABEL */
-static inline void ksu_adb_root_handle_execve(void *restrict filename, void *restrict envp_in)
+static inline void ksu_adb_root_execve_user(void *restrict filename, void *restrict envp_in)
 {
 	if (unlikely(ksu_adb_root))
-		do_ksu_adb_root_handle_execve(filename, envp_in);
+		do_ksu_adb_root_execve_user(filename, envp_in);
 }
-static inline void ksu_adb_root_handle_execveat(void *restrict filename, void *restrict envp_in)
+static inline void ksu_adb_root_execve_kernel(void *restrict filename, void *restrict envp_in)
 {
 	if (unlikely(ksu_adb_root))
-		do_ksu_adb_root_handle_execveat(filename, envp_in);
+		do_ksu_adb_root_execve_kernel(filename, envp_in);
 }
 static inline void ksu_static_branch_enable() { } // no-op
 static inline void ksu_static_branch_disable() { } // no-op

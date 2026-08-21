@@ -30,7 +30,7 @@ static inline void ksu_umount_mnt(const char *mnt, struct path *path, int flags)
 		pr_info("umount %s failed: %d\n", mnt, err);
 }
 
-static void try_umount(const char *mnt, int flags)
+static inline void try_umount(const char *mnt, int flags)
 {
 	struct path path;
 	int err = kern_path(mnt, 0, &path);
