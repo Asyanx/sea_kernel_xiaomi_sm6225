@@ -85,7 +85,9 @@
 #include "downstream/tiny_sulog.h"
 #include "downstream/vmap_patch.h"
 
-#include "downstream/temp_patch_setgroups.h"
+#ifdef CONFIG_KSU_HOSTSREDIRECT
+#include "downstream/ksu_hostsredirect.h"
+#endif
 
 // unity build
 #include "policy/allowlist.c"
@@ -258,14 +260,15 @@ static int __init kernelsu_init(void)
 	ksu_branch_link_patch_init();
 #endif
 
-	ksu_init_setgroups_patch();
-
 	return 0;
 }
 
 #if !defined(MODULE)
 device_initcall(kernelsu_init);
 #else
+
+char ksu_block_modules[256];
+module_param_string(block_modules, ksu_block_modules, sizeof(ksu_block_modules), 0);
 #include "downstream/module_blacklist.h"
 
 #ifndef CONFIG_KSU_SHELL_HAS_SU_ALWAYS

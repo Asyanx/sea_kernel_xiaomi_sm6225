@@ -164,11 +164,10 @@ static __always_inline void ksu_sucompat_user_common(const char __user **filenam
 	uintptr_t *su_p = (uintptr_t *)su;
 	uintptr_t __user *fn_p = (uintptr_t __user *)untagged_addr(*(char **)filename_user);
 
+	static_assert(sizeof(SU_PATH) + 1 == 16);
+
 	// cheaper than prefaulting (fault_in_readable, fault_in_pages_readable)
 	__builtin_prefetch(fn_p);
-
-	// assert /system/bin/su\0 = 15 bytes.
-	BUILD_BUG_ON(sizeof(SU_PATH) + 1 != 16);
 
 	/*
 	 * it seems this is actually the slowest part, so we peek last word first to speed it up
@@ -353,12 +352,14 @@ static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **
 
 	path_put(&kpath);
 	pr_info("su_compat: %s su->ksud!%s\n", function_name, (is_compat_task()) ? " [compat]" : "");
-	memcpy(*filename_ptr, KSUD_PATH, sizeof(KSUD_PATH));
+	const char ksud[16] = KSUD_PATH;
+	memcpy_inline(*filename_ptr, ksud, sizeof(ksud));
 	return;
 
 no_ksud:
 	pr_info("su_compat: %s su->sh!%s\n", function_name, (is_compat_task()) ? " [compat]" : "" );
-	memcpy(*filename_ptr, SH_PATH, sizeof(SH_PATH));
+	const char sh[16] = SH_PATH;
+	memcpy_inline(*filename_ptr, sh, sizeof(sh));
 	return;
 }
 
@@ -369,7 +370,10 @@ SUCOMPAT_HOOK_TYPE ksu_handle_execveat(int *fd, struct filename **filename_ptr, 
 	if (IS_ERR(struct_filename)) // see getname_flags
 		return 0;
 
-	//_Static_assert(offsetof(struct filename, name) == 0, "kernel has bad struct filename");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
+	static_assert(offsetof(struct filename, name) == 0);
+#endif
+
 	// first member of struct filename is char *name.
 	// char *filename = *(char **)struct_filename;
 	ksu_sucompat_kernel_common(fd, (void **)struct_filename, argv, envp, flags, "do_execveat_common");
