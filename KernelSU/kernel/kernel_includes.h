@@ -46,6 +46,7 @@
 #include <linux/capability.h>
 #include <linux/compat.h>
 #include <linux/compiler.h>
+#include <linux/cpumask.h>
 #include <linux/cred.h>
 #include <linux/dcache.h>
 #include <linux/delay.h>
@@ -80,6 +81,7 @@
 #include <linux/namei.h>
 #include <linux/nsproxy.h>
 #include <linux/path.h>
+#include <linux/percpu.h>
 #include <linux/pid.h>
 #include <linux/poll.h>
 #include <linux/printk.h>
@@ -213,8 +215,12 @@
 #define __has_extension(x) (0)
 #endif
 
+#ifndef __has_attribute
+#define __has_attribute(x) (0)
+#endif
+
 /**
- * Linux kernel forbids c99 restrict
+ * Linux kernel restricts C99 restrict
  * however we can use builtin's restrict
  */
 #define restrict __restrict
@@ -225,16 +231,21 @@
  * Limitations:
  *	- do NOT use nullptr_t on _Generic overloading, it will fuck up on C11
  *	- do NOT use constexpr as array size on C11, it will likely become a VLA
- *	- limit typeof_unqual to const/volatile unqual
  */
 #if !defined(KSU_HAS_C23)
+
 #define nullptr ((void *)0)
 typedef typeof(nullptr) nullptr_t;
+
 #define constexpr const
 #define auto __auto_type
+
 #define alignas _Alignas
 #define alignof _Alignof
-#define typeof_unqual(a) typeof(0, (a))
+
+// note: requires clang
+// #define typeof_unqual(a) typeof(0, (a))
+
 #endif // KSU_HAS_C23
 
 // NOTE: clang < 19 has issues on constexpr even with -std=gnu23
@@ -270,14 +281,16 @@ static __nocfi __always_inline void *memset_explicit(void *s, int c, size_t coun
 
 /**
  * old compilers does NOT know fallthrough, this is GNU/C23
- * however we can use a comment and it silences it
+ * however we can use a comment and it silences it (implicit fallthrough)
  * ref: https://elixir.bootlin.com/linux/v7.2.2/source/include/linux/compiler_attributes.h#L216
  */
 #ifndef fallthrough
-#if __has_attribute(__fallthrough__)
+#if __has_c_attribute(fallthrough)
+#define fallthrough [[fallthrough]]
+#elif __has_attribute(__fallthrough__) || defined(__clang__)
 #define fallthrough __attribute__((__fallthrough__))
 #else
-#define fallthrough do { } while (0) /* fallthrough */
+#define fallthrough do {} while (0) /* fallthrough */
 #endif
 #endif
 
@@ -295,29 +308,12 @@ static __nocfi __always_inline void *memset_explicit(void *s, int c, size_t coun
 /**
  * uint128_t / int128_t
  *
- * - _BitInt(x) on C23 or nonstandard __int128 
- * - this exists as an extension on gcc and clang
+ * - nonstandard, this exists as an extension on gcc and clang
  * - can be used with atomics on arm64 via ldxp+stxp or LSE / LSE2, no neon entry required.
  *
  */
-#if __has_extension(_BitInt) || __has_feature(_BitInt)
-#define HAS_BITINT 1
-#endif
-
-#if __has_extension(_ExtInt)
-#define _BitInt(a) _ExtInt(a)
-#define HAS_BITINT 1
-#endif
-
-#if defined(KSU_HAS_C23) || defined(HAS_BITINT)
-#define KSU_HAS_INT128 1
-typedef _BitInt(128) int128_t;
-typedef unsigned _BitInt(128) uint128_t;
-#define make128const(hi,lo) ((((int128_t)hi << 64) | lo))
-#endif
-
-#if defined(CONFIG_64BIT) && defined(__SIZEOF_INT128__) && (__SIZEOF_INT128__ == 16) && !defined(KSU_HAS_INT128)
-#define KSU_HAS_INT128 1
+#if defined(CONFIG_64BIT) && defined(__SIZEOF_INT128__) && (__SIZEOF_INT128__ == 16)
+#define KSU_HAS_INT128
 typedef __int128 int128_t;
 typedef unsigned __int128 uint128_t;
 #define make128const(hi,lo) ((((int128_t)hi << 64) | lo))
@@ -387,6 +383,26 @@ static inline void spin_unlock_byref(spinlock_t **lock) { spin_unlock(*lock); }
 static inline void kfree_byref(void *buf) { kfree(*(void **)buf); }
 #define __offstack(size) __cleanup(kfree_byref) = kmalloc(size, GFP_KERNEL)
 #define __zoffstack(size) __cleanup(kfree_byref) = kzalloc(size, GFP_KERNEL)
+
+/**
+ * workaround for gcc 4.9 with -std=gnu11 enabled
+ * - error: initializer element is not constant
+ *
+ * we just remove (spinlock_t/raw_spinlock_t) cast
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0) && !defined(__clang__) && defined(__GNUC__) && (__GNUC__ < 5)
+
+#undef __SPIN_LOCK_UNLOCKED
+#define __SPIN_LOCK_UNLOCKED(lockname) __SPIN_LOCK_INITIALIZER(lockname)
+
+#undef __RAW_SPIN_LOCK_UNLOCKED
+#define __RAW_SPIN_LOCK_UNLOCKED(lockname) __RAW_SPIN_LOCK_INITIALIZER(lockname)
+
+// re-type so it can expand
+#undef raw_spin_lock_init
+#define raw_spin_lock_init(lock) do { *(lock) = (typeof(*(lock))) __RAW_SPIN_LOCK_UNLOCKED(lock); } while (0)
+
+#endif
 
 /**
  * replace common mem/str functions with builtins
