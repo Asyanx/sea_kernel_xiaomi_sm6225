@@ -18,6 +18,7 @@
 #include <linux/uidgid.h>
 #include <linux/version.h>
 #include <linux/mount.h>
+
 #include <linux/fs.h>
 #include <linux/namei.h>
 
@@ -26,6 +27,7 @@
 #endif // #ifdef CONFIG_KSU_SUSFS
 
 #include "allowlist.h"
+#include "arch.h"
 #include "core_hook.h"
 #include "klog.h" // IWYU pragma: keep
 #include "ksu.h"
@@ -57,6 +59,15 @@ extern void susfs_run_try_umount_for_current_mnt_ns(void);
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 static bool susfs_is_umount_for_zygote_system_process_enabled = false;
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+extern bool susfs_is_auto_add_sus_bind_mount_enabled;
+#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+extern bool susfs_is_auto_add_sus_ksu_default_mount_enabled;
+#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+extern bool susfs_is_auto_add_try_umount_for_bind_mount_enabled;
+#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
 
 static inline void susfs_on_post_fs_data(void) {
 	struct path path;
@@ -67,6 +78,27 @@ static inline void susfs_on_post_fs_data(void) {
 	}
 	pr_info("susfs_is_umount_for_zygote_system_process_enabled: %d\n", susfs_is_umount_for_zygote_system_process_enabled);
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+	if (!kern_path(DATA_ADB_NO_AUTO_ADD_SUS_BIND_MOUNT, 0, &path)) {
+		susfs_is_auto_add_sus_bind_mount_enabled = false;
+		path_put(&path);
+	}
+	pr_info("susfs_is_auto_add_sus_bind_mount_enabled: %d\n", susfs_is_auto_add_sus_bind_mount_enabled);
+#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+	if (!kern_path(DATA_ADB_NO_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT, 0, &path)) {
+		susfs_is_auto_add_sus_ksu_default_mount_enabled = false;
+		path_put(&path);
+	}
+	pr_info("susfs_is_auto_add_sus_ksu_default_mount_enabled: %d\n", susfs_is_auto_add_sus_ksu_default_mount_enabled);
+#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+	if (!kern_path(DATA_ADB_NO_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT, 0, &path)) {
+		susfs_is_auto_add_try_umount_for_bind_mount_enabled = false;
+		path_put(&path);
+	}
+	pr_info("susfs_is_auto_add_try_umount_for_bind_mount_enabled: %d\n", susfs_is_auto_add_try_umount_for_bind_mount_enabled);
+#endif // #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
 }
 
 #endif // #ifdef CONFIG_KSU_SUSFS
@@ -266,12 +298,10 @@ static void nuke_ext4_sysfs() {
 	const char* name = sb->s_type->name;
 	if (strcmp(name, "ext4") != 0) {
 		pr_info("nuke but module aren't mounted\n");
-		path_put(&path);
 		return;
 	}
 
 	ext4_unregister_sysfs(sb);
- 	path_put(&path);
 }
 
 int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
@@ -480,6 +510,56 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 			return 0;
 		}
 #endif //#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+		if (arg2 == CMD_SUSFS_ADD_SUS_KSTAT) {
+			int error = 0;
+			if (!ksu_access_ok((void __user*)arg3, sizeof(struct st_susfs_sus_kstat))) {
+				pr_err("susfs: CMD_SUSFS_ADD_SUS_KSTAT -> arg3 is not accessible\n");
+				return 0;
+			}
+			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
+				pr_err("susfs: CMD_SUSFS_ADD_SUS_KSTAT -> arg5 is not accessible\n");
+				return 0;
+			}
+			error = susfs_add_sus_kstat((struct st_susfs_sus_kstat __user*)arg3);
+			pr_info("susfs: CMD_SUSFS_ADD_SUS_KSTAT -> ret: %d\n", error);
+			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
+				pr_info("susfs: copy_to_user() failed\n");
+			return 0;
+		}
+		if (arg2 == CMD_SUSFS_UPDATE_SUS_KSTAT) {
+			int error = 0;
+			if (!ksu_access_ok((void __user*)arg3, sizeof(struct st_susfs_sus_kstat))) {
+				pr_err("susfs: CMD_SUSFS_UPDATE_SUS_KSTAT -> arg3 is not accessible\n");
+				return 0;
+			}
+			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
+				pr_err("susfs: CMD_SUSFS_UPDATE_SUS_KSTAT -> arg5 is not accessible\n");
+				return 0;
+			}
+			error = susfs_update_sus_kstat((struct st_susfs_sus_kstat __user*)arg3);
+			pr_info("susfs: CMD_SUSFS_UPDATE_SUS_KSTAT -> ret: %d\n", error);
+			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
+				pr_info("susfs: copy_to_user() failed\n");
+			return 0;
+		}
+		if (arg2 == CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY) {
+			int error = 0;
+			if (!ksu_access_ok((void __user*)arg3, sizeof(struct st_susfs_sus_kstat))) {
+				pr_err("susfs: CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY -> arg3 is not accessible\n");
+				return 0;
+			}
+			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
+				pr_err("susfs: CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY -> arg5 is not accessible\n");
+				return 0;
+			}
+			error = susfs_add_sus_kstat((struct st_susfs_sus_kstat __user*)arg3);
+			pr_info("susfs: CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY -> ret: %d\n", error);
+			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
+				pr_info("susfs: copy_to_user() failed\n");
+			return 0;
+        }
+#endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
 		if (arg2 == CMD_SUSFS_ADD_TRY_UMOUNT) {
 			int error = 0;
@@ -534,6 +614,42 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 			return 0;
 		}
 #endif //#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+		if (arg2 == CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG) {
+			int error = 0;
+			if (!ksu_access_ok((void __user*)arg3, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE)) {
+				pr_err("susfs: CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG -> arg3 is not accessible\n");
+				return 0;
+			}
+			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
+				pr_err("susfs: CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG -> arg5 is not accessible\n");
+				return 0;
+			}
+			error = susfs_set_cmdline_or_bootconfig((char __user*)arg3);
+			pr_info("susfs: CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG -> ret: %d\n", error);
+			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
+				pr_info("susfs: copy_to_user() failed\n");
+			return 0;
+		}
+#endif //#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+		if (arg2 == CMD_SUSFS_ADD_OPEN_REDIRECT) {
+			int error = 0;
+			if (!ksu_access_ok((void __user*)arg3, sizeof(struct st_susfs_open_redirect))) {
+				pr_err("susfs: CMD_SUSFS_ADD_OPEN_REDIRECT -> arg3 is not accessible\n");
+				return 0;
+			}
+			if (!ksu_access_ok((void __user*)arg5, sizeof(error))) {
+				pr_err("susfs: CMD_SUSFS_ADD_OPEN_REDIRECT -> arg5 is not accessible\n");
+				return 0;
+			}
+			error = susfs_add_open_redirect((struct st_susfs_open_redirect __user*)arg3);
+			pr_info("susfs: CMD_SUSFS_ADD_OPEN_REDIRECT -> ret: %d\n", error);
+			if (copy_to_user((void __user*)arg5, &error, sizeof(error)))
+				pr_info("susfs: copy_to_user() failed\n");
+			return 0;
+		}
+#endif //#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 		if (arg2 == CMD_SUSFS_SHOW_VERSION) {
 			int error = 0;
 			int len_of_susfs_version = strlen(SUSFS_VERSION);
@@ -569,14 +685,41 @@ int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 			enabled_features |= (1 << 1);
 #endif
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+			enabled_features |= (1 << 2);
+#endif
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+			enabled_features |= (1 << 3);
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+			enabled_features |= (1 << 4);
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_OVERLAYFS
+			enabled_features |= (1 << 5);
+#endif
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
 			enabled_features |= (1 << 6);
+#endif
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+			enabled_features |= (1 << 7);
 #endif
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
 			enabled_features |= (1 << 8);
 #endif
 #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
 			enabled_features |= (1 << 9);
+#endif
+#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+			enabled_features |= (1 << 10);
+#endif
+#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+			enabled_features |= (1 << 11);
+#endif
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+			enabled_features |= (1 << 12);
+#endif
+#ifdef CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT
+			enabled_features |= (1 << 14);
 #endif
 			error = copy_to_user((void __user*)arg3, (void*)&enabled_features, sizeof(enabled_features));
 			pr_info("susfs: CMD_SUSFS_SHOW_ENABLED_FEATURES -> ret: %d\n", error);
@@ -753,6 +896,9 @@ static void ksu_try_umount(const char *mnt, bool check_mnt, int flags)
 	if (susfs_is_log_enabled) {
 		pr_info("susfs: umounting '%s' for uid: %d\n", mnt, uid);
 	}
+#else
+	// debug
+	pr_info("try_umount: umounting '%s'\n", mnt);
 #endif
 	ksu_umount_mnt(&path, flags);
 }
