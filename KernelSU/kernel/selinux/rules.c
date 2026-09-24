@@ -36,9 +36,9 @@ static struct policydb *get_policydb(void)
 	return db;
 }
 
-void ksu_apply_kernelsu_rules()
+void apply_kernelsu_rules()
 {
-	if (!ksu_getenforce()) {
+	if (!getenforce()) {
 		pr_info("SELinux permissive or disabled, apply rules!\n");
 	}
 
@@ -137,9 +137,6 @@ void ksu_apply_kernelsu_rules()
 #ifdef CONFIG_KSU_SUSFS
 	// Allow umount in zygote process without installing zygisk
 	ksu_allow(db, "zygote", "labeledfs", "filesystem", "unmount");
-	susfs_set_init_sid();
-	susfs_set_ksu_sid();
-	susfs_set_zygote_sid();
 #endif
 
 	rcu_read_unlock();
@@ -203,13 +200,13 @@ static void reset_avc_cache()
 	selinux_xfrm_notify_policyload();
 }
 
-int ksu_handle_sepolicy(unsigned long arg3, void __user *arg4)
+int handle_sepolicy(unsigned long arg3, void __user *arg4)
 {
 	if (!arg4) {
 		return -1;
 	}
 
-	if (!ksu_getenforce()) {
+	if (!getenforce()) {
 		pr_info("SELinux permissive or disabled when handle policy!\n");
 	}
 
